@@ -233,3 +233,4 @@ class FieldServiceMaterialAllocation extends CommonObject
 		ksort($batches, SORT_NATURAL | SORT_FLAG_CASE);
 		return $batches;
 	}
+}
