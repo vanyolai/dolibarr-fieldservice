@@ -27,3 +27,4 @@ FieldServiceSerialBulkInput=Bulk serial input
 FieldServiceSerialBulkHelp=Enter or scan one serial number per line
 FieldServiceAllocatedLotNoLongerAvailable=Previously allocated lot/serial is no longer available in the warehouse: %s
 FieldServiceAllocationReset=The previous lot/serial allocation was cleared because product, warehouse or quantity changed. Allocate the line again.
+FieldServiceBatchModuleRequired=The Dolibarr Lot/Serial module must be enabled for this product
