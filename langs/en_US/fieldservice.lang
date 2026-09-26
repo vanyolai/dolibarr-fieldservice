@@ -1,0 +1,8 @@
+ModuleFieldServiceName=Field Service
+ModuleFieldServiceDesc=Field work, service and installation workflow using Dolibarr interventions, products, warehouses, stock movements and lot/serial tracking.
+FieldServiceMaterials=Material usage
+FieldServiceMaterialsInitialHelp=Material usage will be managed here. Stock posting and lot/serial allocation are intentionally not implemented in the initial module skeleton.
+FieldServiceReadMaterials=Read Field Service material usage
+FieldServiceWriteMaterials=Create and modify Field Service material usage
+FieldServicePostMaterials=Post and reverse Field Service material usage to stock
+FieldServiceDeleteMaterials=Delete draft Field Service material usage

@@ -1,0 +1,8 @@
+ModuleFieldServiceName=Field Service
+ModuleFieldServiceDesc=Helyszíni munka, szerviz és telepítési munkafolyamat a Dolibarr munkalap-, termék-, raktár-, készletmozgás- és LOT/sorozatszám-kezelésére építve.
+FieldServiceMaterials=Anyagfelhasználás
+FieldServiceMaterialsInitialHelp=Az anyagfelhasználás ezen a lapon lesz kezelhető. A készletkönyvelés és a LOT/sorozatszám-allokáció szándékosan nem része a kezdeti modulváznak.
+FieldServiceReadMaterials=Field Service anyagfelhasználás megtekintése
+FieldServiceWriteMaterials=Field Service anyagfelhasználás létrehozása és módosítása
+FieldServicePostMaterials=Field Service anyagfelhasználás készletre könyvelése és visszafordítása
+FieldServiceDeleteMaterials=Piszkozat Field Service anyagfelhasználás törlése
