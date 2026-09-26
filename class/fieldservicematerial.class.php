@@ -35,6 +35,12 @@ class FieldServiceMaterial extends CommonObject
 	/** @var string Icon. */
 	public $picto = 'product';
 
+	/** @var int<0,1> Manage entity directly on this object. */
+	public $ismultientitymanaged = 1;
+
+	/** @var int<0,1> No extrafields in the first milestone. */
+	public $isextrafieldmanaged = 0;
+
 	/** @var int Entity. */
 	public $entity;
 	/** @var int Core Fichinter rowid. */
@@ -93,5 +99,91 @@ class FieldServiceMaterial extends CommonObject
 			'date_creation' => array('type' => 'datetime', 'label' => 'DateCreation', 'enabled' => 1, 'visible' => -1, 'notnull' => 1, 'position' => 500),
 			'tms' => array('type' => 'timestamp', 'label' => 'DateModification', 'enabled' => 1, 'visible' => -1, 'notnull' => 0, 'position' => 501),
 		);
+	}
+
+	/**
+	 * Create material line.
+	 *
+	 * @param User $user User creating the line
+	 * @param int<0,1> $notrigger Disable triggers
+	 * @return int<-1,max> New row id or negative value on error
+	 */
+	public function create(User $user, $notrigger = 0)
+	{
+		return $this->createCommon($user, $notrigger);
+	}
+
+	/**
+	 * Fetch material line.
+	 *
+	 * @param int $id Row id
+	 * @param string|null $ref Unused reference parameter for CommonObject compatibility
+	 * @param int<0,1> $noextrafields Do not fetch extrafields
+	 * @param int<0,1> $nolines Unused
+	 * @return int<-1,1>
+	 */
+	public function fetch($id, $ref = null, $noextrafields = 0, $nolines = 0)
+	{
+		return $this->fetchCommon($id, $ref, '', $noextrafields);
+	}
+
+	/**
+	 * Update material line.
+	 *
+	 * @param User $user User updating the line
+	 * @param int<0,1> $notrigger Disable triggers
+	 * @return int<-1,1>
+	 */
+	public function update(User $user, $notrigger = 0)
+	{
+		return $this->updateCommon($user, $notrigger);
+	}
+
+	/**
+	 * Delete material line.
+	 *
+	 * Only draft material lines should be passed to this method by callers.
+	 *
+	 * @param User $user User deleting the line
+	 * @param int<0,1> $notrigger Disable triggers
+	 * @return int<-1,1>
+	 */
+	public function delete(User $user, $notrigger = 0)
+	{
+		return $this->deleteCommon($user, $notrigger);
+	}
+
+	/**
+	 * Load material lines belonging to one Intervention.
+	 *
+	 * @param int $fichinterId Core Fichinter id
+	 * @return array<int,FieldServiceMaterial>|int<-1,-1>
+	 */
+	public function fetchAllByIntervention($fichinterId)
+	{
+		global $conf;
+
+		$records = array();
+		$sql = 'SELECT rowid';
+		$sql .= ' FROM '.$this->db->prefix().$this->table_element;
+		$sql .= ' WHERE entity = '.((int) $conf->entity);
+		$sql .= ' AND fk_fichinter = '.((int) $fichinterId);
+		$sql .= ' ORDER BY date_use ASC, rowid ASC';
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+
+		while ($obj = $this->db->fetch_object($resql)) {
+			$record = new self($this->db);
+			if ($record->fetch((int) $obj->rowid) > 0) {
+				$records[$record->id] = $record;
+			}
+		}
+
+		$this->db->free($resql);
+		return $records;
 	}
 }
