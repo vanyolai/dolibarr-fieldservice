@@ -312,11 +312,33 @@ print '</div>';
 
 if ($user->hasRight('fieldservice', 'materials', 'write')) {
 	$isEdit = is_object($editmaterial);
-	$selectedProduct = $isEdit ? (int) $editmaterial->fk_product : GETPOSTINT('fk_product');
-	$selectedWarehouse = $isEdit ? (int) $editmaterial->fk_entrepot : (GETPOSTINT('fk_entrepot') > 0 ? GETPOSTINT('fk_entrepot') : -2);
-	$selectedQty = $isEdit ? $editmaterial->qty : GETPOST('qty', 'alphanohtml');
-	$selectedDescription = $isEdit ? $editmaterial->description : GETPOST('description', 'restricthtml');
-	$selectedDate = $isEdit ? $editmaterial->date_use : dol_now();
+
+	// Keep every submitted value after a validation error. Without this, selectDate()
+	// would silently fall back to today and an edit form could fall back to stored values.
+	$hasSubmittedValues = GETPOSTISSET('fk_product')
+		|| GETPOSTISSET('fk_entrepot')
+		|| GETPOSTISSET('qty')
+		|| GETPOSTISSET('date_useyear')
+		|| GETPOSTISSET('description');
+
+	if ($hasSubmittedValues) {
+		$selectedProduct = GETPOSTINT('fk_product');
+		$selectedWarehouse = GETPOSTINT('fk_entrepot');
+		$selectedQty = GETPOST('qty', 'alphanohtml');
+		$selectedDescription = GETPOST('description', 'restricthtml');
+
+		if (GETPOSTINT('date_useyear') > 0 && GETPOSTINT('date_usemonth') > 0 && GETPOSTINT('date_useday') > 0) {
+			$selectedDate = dol_mktime(12, 0, 0, GETPOSTINT('date_usemonth'), GETPOSTINT('date_useday'), GETPOSTINT('date_useyear'));
+		} else {
+			$selectedDate = '';
+		}
+	} else {
+		$selectedProduct = $isEdit ? (int) $editmaterial->fk_product : 0;
+		$selectedWarehouse = $isEdit ? (int) $editmaterial->fk_entrepot : -2;
+		$selectedQty = $isEdit ? $editmaterial->qty : '';
+		$selectedDescription = $isEdit ? $editmaterial->description : '';
+		$selectedDate = $isEdit ? $editmaterial->date_use : dol_now();
+	}
 
 	print '<br>';
 	print load_fiche_titre($langs->trans($isEdit ? 'Modify' : 'Add'), '', '');
