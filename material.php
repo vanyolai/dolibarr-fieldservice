@@ -607,7 +607,7 @@ if (empty($lines)) {
 			print '<input type="hidden" name="token" value="'.newToken().'">';
 			print '<input type="hidden" name="action" value="delete">';
 			print '<input type="hidden" name="materialid" value="'.$line->id.'">';
-			print '<button type="submit" class="button-delete bordertransp" title="'.$langs->trans('Delete').'">'.img_delete().'</button>';
+			print '<button type="submit" class="button-delete bordertransp cursorpointer" title="'.$langs->trans('Delete').'">'.img_delete().'</button>';
 			print '</form>';
 		}
 
