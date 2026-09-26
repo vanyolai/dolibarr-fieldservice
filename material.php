@@ -776,7 +776,8 @@ if (!is_object($allocmaterial) && $user->hasRight('fieldservice', 'materials', '
 	if ($hasSubmittedValues || $scannedProductId > 0) {
 		$selectedProduct = $scannedProductId > 0 ? $scannedProductId : GETPOSTINT('fk_product');
 		$selectedWarehouse = GETPOSTINT('fk_entrepot') > 0 ? GETPOSTINT('fk_entrepot') : -2;
-		$selectedQty = GETPOSTISSET('qty') ? GETPOST('qty', 'alphanohtml') : ($scannedProductId > 0 ? '1' : '');
+		$postedQty = GETPOST('qty', 'alphanohtml');
+		$selectedQty = ($scannedProductId > 0 && $postedQty === '') ? '1' : $postedQty;
 		$selectedDescription = GETPOST('description', 'restricthtml');
 
 		if (GETPOSTINT('date_useyear') > 0 && GETPOSTINT('date_usemonth') > 0 && GETPOSTINT('date_useday') > 0) {
