@@ -27,3 +27,4 @@ FieldServiceSerialBulkInput=Tömeges sorozatszám bevitel
 FieldServiceSerialBulkHelp=Adjon meg vagy olvasson be soronként egy sorozatszámot
 FieldServiceAllocatedLotNoLongerAvailable=A korábban allokált LOT/sorozatszám már nem érhető el a raktárban: %s
 FieldServiceAllocationReset=A korábbi LOT/sorozatszám allokáció törölve lett, mert megváltozott a termék, a raktár vagy a mennyiség. A sort újra kell allokálni.
+FieldServiceBatchModuleRequired=Ehhez a termékhez engedélyezni kell a Dolibarr LOT/sorozatszám modult
