@@ -1,0 +1,11 @@
+CREATE TABLE llx_fieldservice_workorder(
+	rowid INTEGER AUTO_INCREMENT PRIMARY KEY,
+	entity INTEGER DEFAULT 1 NOT NULL,
+	fk_fichinter INTEGER NOT NULL,
+	billing_status SMALLINT DEFAULT 0 NOT NULL,
+	date_billing_ready DATETIME,
+	date_billed DATETIME,
+	fk_user_modif INTEGER,
+	date_creation DATETIME NOT NULL,
+	tms TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=innodb;

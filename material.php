@@ -21,6 +21,8 @@ require_once DOL_DOCUMENT_ROOT.'/product/stock/class/entrepot.class.php';
 require_once DOL_DOCUMENT_ROOT.'/product/class/html.formproduct.class.php';
 require_once __DIR__.'/class/fieldservicematerial.class.php';
 require_once __DIR__.'/class/fieldservicematerialallocation.class.php';
+require_once __DIR__.'/class/fieldserviceworkorderstate.class.php';
+require_once __DIR__.'/class/fieldserviceshipmentservice.class.php';
 
 /**
  * @var Conf $conf
@@ -29,7 +31,7 @@ require_once __DIR__.'/class/fieldservicematerialallocation.class.php';
  * @var User $user
  */
 
-$langs->loadLangs(array('companies', 'interventions', 'products', 'stocks', 'errors', 'fieldservice@fieldservice'));
+$langs->loadLangs(array('companies', 'interventions', 'products', 'stocks', 'sendings', 'orders', 'errors', 'fieldservice@fieldservice'));
 if (isModEnabled('productbatch')) {
 	$langs->load('productbatch');
 }
@@ -61,6 +63,8 @@ $form = new Form($db);
 $formproduct = new FormProduct($db);
 $material = new FieldServiceMaterial($db);
 $allocation = new FieldServiceMaterialAllocation($db);
+$workOrderState = new FieldServiceWorkOrderState($db);
+$shipmentService = new FieldServiceShipmentService($db);
 $allocmaterial = null;
 $allocproduct = null;
 $scannedProductId = 0;
@@ -68,6 +72,24 @@ $scannedProductId = 0;
 /*
  * Actions
  */
+
+if ($action === 'syncshipment') {
+	if (!$user->hasRight('fieldservice', 'materials', 'write')) {
+		accessforbidden();
+	}
+
+	$db->begin();
+	$result = $shipmentService->syncAllMaterials($object, $user);
+	if ($result > 0) {
+		$db->commit();
+		setEventMessages($langs->trans('FieldServiceShipmentSynchronized'), null, 'mesgs');
+		header('Location: '.$_SERVER['PHP_SELF'].'?id='.$object->id);
+		exit;
+	}
+
+	$db->rollback();
+	setEventMessages($shipmentService->error, $shipmentService->errors, 'errors');
+}
 
 if ($action === 'scanproduct') {
 	if (!$user->hasRight('fieldservice', 'materials', 'write')) {
@@ -146,14 +168,21 @@ if ($action === 'add') {
 				$action = 'prepareadd';
 			}
 		} else {
+			$db->begin();
 			$result = $material->create($user);
 			if ($result > 0) {
+				$result = $shipmentService->syncMaterial($material, $object, $user);
+			}
+
+			if ($result > 0) {
+				$db->commit();
 				setEventMessages($langs->trans('FieldServiceMaterialAdded'), null, 'mesgs');
 				header('Location: '.$_SERVER['PHP_SELF'].'?id='.$object->id);
 				exit;
 			}
 
-			setEventMessages($material->error, $material->errors, 'errors');
+			$db->rollback();
+			setEventMessages($material->error ?: $shipmentService->error, array_merge($material->errors, $shipmentService->errors), 'errors');
 		}
 	}
 }
@@ -272,6 +301,15 @@ if ($action === 'update' && $materialid > 0) {
 			if ($result > 0 && $resetAllocation) {
 				$result = $allocation->deleteDraftByMaterial($material->id);
 			}
+			if ($result > 0) {
+				if ($resetAllocation && isModEnabled('productbatch') && $product->hasbatch()) {
+					// The old shipment line is no longer valid, but the replacement
+					// cannot be created until the new LOT/SN allocation is complete.
+					$result = $shipmentService->removeMaterialFromDraftShipment($material->id, $user);
+				} else {
+					$result = $shipmentService->syncMaterial($material, $object, $user);
+				}
+			}
 
 			if ($result > 0) {
 				$db->commit();
@@ -284,7 +322,9 @@ if ($action === 'update' && $materialid > 0) {
 			}
 
 			$db->rollback();
-			setEventMessages($material->error ?: $allocation->error, array_merge($material->errors, $allocation->errors), 'errors');
+			$errorMessage = $material->error ?: ($allocation->error ?: $shipmentService->error);
+			$errorList = array_merge($material->errors, $allocation->errors, $shipmentService->errors);
+			setEventMessages($errorMessage, $errorList, 'errors');
 		}
 
 		$action = 'edit';
@@ -304,7 +344,10 @@ if ($action === 'delete' && $materialid > 0) {
 		setEventMessages($langs->trans('FieldServiceOnlyDraftDeletable'), null, 'errors');
 	} else {
 		$db->begin();
-		$result = $allocation->deleteDraftByMaterial($material->id);
+		$result = $shipmentService->removeMaterialFromDraftShipment($material->id, $user);
+		if ($result > 0) {
+			$result = $allocation->deleteDraftByMaterial($material->id);
+		}
 		if ($result > 0) {
 			$result = $material->delete($user);
 		}
@@ -313,7 +356,9 @@ if ($action === 'delete' && $materialid > 0) {
 			setEventMessages($langs->trans('FieldServiceMaterialDeleted'), null, 'mesgs');
 		} else {
 			$db->rollback();
-			setEventMessages($material->error ?: $allocation->error, array_merge($material->errors, $allocation->errors), 'errors');
+			$errorMessage = $material->error ?: ($allocation->error ?: $shipmentService->error);
+			$errorList = array_merge($material->errors, $allocation->errors, $shipmentService->errors);
+			setEventMessages($errorMessage, $errorList, 'errors');
 		}
 	}
 
@@ -475,6 +520,10 @@ if (($action === 'saveallocation' || $action === 'addallocated') && is_object($a
 		}
 
 		if ($result > 0) {
+			$result = $shipmentService->syncMaterial($allocmaterial, $object, $user);
+		}
+
+		if ($result > 0) {
 			$db->commit();
 			setEventMessages($langs->trans($isNewMaterial ? 'FieldServiceMaterialAdded' : 'FieldServiceAllocationSaved'), null, 'mesgs');
 			header('Location: '.$_SERVER['PHP_SELF'].'?id='.$object->id);
@@ -486,7 +535,9 @@ if (($action === 'saveallocation' || $action === 'addallocated') && is_object($a
 			// The insert was rolled back; keep the object transient for re-rendering.
 			$allocmaterial->id = 0;
 		}
-		setEventMessages($allocmaterial->error ?: $allocation->error, array_merge($allocmaterial->errors, $allocation->errors), 'errors');
+		$errorMessage = $allocmaterial->error ?: ($allocation->error ?: $shipmentService->error);
+		$errorList = array_merge($allocmaterial->errors, $allocation->errors, $shipmentService->errors);
+		setEventMessages($errorMessage, $errorList, 'errors');
 	}
 
 	$action = ($action === 'addallocated') ? 'prepareadd' : 'allocate';
@@ -529,13 +580,98 @@ $morehtmlref .= '</div>';
 
 dol_banner_tab($object, 'ref', $linkback, 1, 'ref', 'ref', $morehtmlref);
 
+$billingStatus = FieldServiceWorkOrderState::BILLING_OPEN;
+$billingStateResult = $workOrderState->fetchByIntervention($object->id);
+if ($billingStateResult > 0) {
+	$billingStatus = (int) $workOrderState->billing_status;
+} elseif ($billingStateResult < 0) {
+	setEventMessages($workOrderState->error, $workOrderState->errors, 'errors');
+}
+
+// Existing completed work orders predate Field Service metadata. Until a row is
+// persisted by the close workflow, treat them as waiting for invoicing rather
+// than forcing the operational work order to remain open.
+if ((int) $object->status === Fichinter::STATUS_CLOSED) {
+	if ($billingStatus === FieldServiceWorkOrderState::BILLING_OPEN) {
+		$billingStatus = FieldServiceWorkOrderState::BILLING_PENDING;
+	}
+} elseif ($billingStatus === FieldServiceWorkOrderState::BILLING_PENDING) {
+	// A reopened work order is operationally active again. Do not present it as
+	// ready for billing until it is completed again.
+	$billingStatus = FieldServiceWorkOrderState::BILLING_OPEN;
+}
+
+switch ($billingStatus) {
+	case FieldServiceWorkOrderState::BILLING_PENDING:
+		$billingLabel = $langs->trans('FieldServiceBillingPending');
+		$billingStatusHtml = dolGetStatus($billingLabel, $billingLabel, '', 'status1', 2);
+		break;
+	case FieldServiceWorkOrderState::BILLING_PARTIAL:
+		$billingLabel = $langs->trans('FieldServiceBillingPartial');
+		$billingStatusHtml = dolGetStatus($billingLabel, $billingLabel, '', 'status3', 2);
+		break;
+	case FieldServiceWorkOrderState::BILLING_INVOICED:
+		$billingLabel = $langs->trans('FieldServiceBillingInvoiced');
+		$billingStatusHtml = dolGetStatus($billingLabel, $billingLabel, '', 'status6', 2);
+		break;
+	case FieldServiceWorkOrderState::BILLING_NOT_BILLABLE:
+		$billingLabel = $langs->trans('FieldServiceBillingNotBillable');
+		$billingStatusHtml = dolGetStatus($billingLabel, $billingLabel, '', 'status4', 2);
+		break;
+	case FieldServiceWorkOrderState::BILLING_OPEN:
+	default:
+		$billingLabel = $langs->trans('FieldServiceBillingOpen');
+		$billingStatusHtml = dolGetStatus($billingLabel, $billingLabel, '', 'status0', 2);
+		break;
+}
+
 print '<div class="fichecenter">';
 print '<div class="underbanner clearboth"></div>';
+print '<div class="fieldservice-billing-status marginbottomonly">';
+print '<strong>'.$langs->trans('FieldServiceBillingStatus').':</strong> '.$billingStatusHtml;
+print '</div>';
+
+$shipmentRows = $shipmentService->getShipmentsForIntervention($object->id);
+if ($shipmentRows === false) {
+	setEventMessages($shipmentService->error, $shipmentService->errors, 'errors');
+	$shipmentRows = array();
+}
+if (!empty($shipmentRows)) {
+	print '<div class="fieldservice-shipment-status marginbottomonly">';
+	print '<strong>'.$langs->trans('FieldServiceRelatedShipments').':</strong> ';
+	$shipmentLabels = array();
+	foreach ($shipmentRows as $shipmentRow) {
+		$shipment = $shipmentRow['shipment'];
+		$label = '<a href="'.DOL_URL_ROOT.'/expedition/card.php?id='.$shipment->id.'">'.img_object('', 'sending', 'class="pictofixedwidth"').dol_escape_htmltag($shipment->ref).'</a>';
+		$label .= ' '.$shipment->getLibStatut(2);
+		if (!empty($shipmentRow['order_id'])) {
+			$order = new Commande($db);
+			if ($order->fetch((int) $shipmentRow['order_id']) > 0) {
+				$label .= ' <span class="opacitymedium">('.$langs->trans('Order').': '.$order->getNomUrl(0).')</span>';
+			}
+		}
+		$shipmentLabels[] = $label;
+	}
+	print implode('<br>', $shipmentLabels);
+	print '</div>';
+}
 
 $lines = $material->fetchAllByIntervention($object->id);
 if (!is_array($lines)) {
 	setEventMessages($material->error, $material->errors, 'errors');
 	$lines = array();
+}
+
+$shipmentSyncComplete = $shipmentService->isMaterialSyncComplete($object->id);
+if ($shipmentSyncComplete === 0 && !empty($lines)) {
+	print '<div class="warning">';
+	print $langs->trans('FieldServiceShipmentSyncRequired');
+	if ($user->hasRight('fieldservice', 'materials', 'write')) {
+		print ' <a class="button small" href="'.$_SERVER['PHP_SELF'].'?id='.$object->id.'&action=syncshipment&token='.newToken().'">'.$langs->trans('FieldServiceSynchronizeShipment').'</a>';
+	}
+	print '</div>';
+} elseif ($shipmentSyncComplete < 0) {
+	setEventMessages($shipmentService->error, $shipmentService->errors, 'errors');
 }
 
 print load_fiche_titre($langs->trans('FieldServiceMaterials'), '', 'product');

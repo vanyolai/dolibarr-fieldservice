@@ -1,0 +1,203 @@
+<?php
+/* Copyright (C) 2026 Krisztian Vanyolai
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
+/**
+ * \file       fieldservice/class/actions_fieldservice.class.php
+ * \ingroup    fieldservice
+ * \brief      Field Service hooks for Intervention UI.
+ */
+
+require_once DOL_DOCUMENT_ROOT.'/core/class/commonhookactions.class.php';
+require_once __DIR__.'/fieldserviceworkorderstate.class.php';
+
+/**
+ * Field Service hook actions.
+ */
+class ActionsFieldService extends CommonHookActions
+{
+	/** @var DoliDB */
+	public $db;
+
+	/** @var string */
+	public $resprints = '';
+
+	/**
+	 * Constructor.
+	 *
+	 * @param DoliDB $db Database handler
+	 */
+	public function __construct($db)
+	{
+		$this->db = $db;
+	}
+
+	/**
+	 * Show Field Service billing state on the Intervention card.
+	 *
+	 * This is deliberately a second status dimension. The core Fichinter status
+	 * continues to represent operational state (Draft/Validated/Done).
+	 *
+	 * @param array<string,mixed> $parameters Hook parameters
+	 * @param CommonObject $object Intervention
+	 * @param string|null $action Current action
+	 * @param HookManager $hookmanager Hook manager
+	 * @return int
+	 */
+	public function addMoreActionsButtons($parameters, &$object, &$action, $hookmanager)
+	{
+		global $langs;
+
+		$this->resprints = '';
+		if (($parameters['currentcontext'] ?? '') !== 'interventioncard' || empty($object->id)) {
+			return 0;
+		}
+
+		$langs->load('fieldservice@fieldservice');
+
+		$state = new FieldServiceWorkOrderState($this->db);
+		$result = $state->fetchByIntervention((int) $object->id);
+
+		// A pre-Field-Service work order has no metadata row yet. If it is already
+		// operationally completed, present it as ready to invoice until persisted.
+		if ($result <= 0) {
+			$billingStatus = ((int) $object->status === 3)
+				? FieldServiceWorkOrderState::BILLING_PENDING
+				: FieldServiceWorkOrderState::BILLING_OPEN;
+		} else {
+			$billingStatus = (int) $state->billing_status;
+		}
+
+		$labelKey = $this->getBillingStatusLabelKey($billingStatus);
+		$label = $langs->trans($labelKey);
+		$statusCode = $this->getBillingStatusCode($billingStatus);
+
+		$this->resprints .= '<div class="inline-block marginrightonly">';
+		$this->resprints .= '<span class="opacitymedium">'.$langs->trans('FieldServiceBillingStatus').':</span> ';
+		$this->resprints .= dolGetStatus($label, $label, '', $statusCode, 2);
+		$this->resprints .= '</div>';
+
+		return 0;
+	}
+
+	/**
+	 * Add billing-state column title to Intervention list.
+	 *
+	 * @param array<string,mixed> $parameters Hook parameters
+	 * @param CommonObject $object List object
+	 * @param string|null $action Current action
+	 * @param HookManager $hookmanager Hook manager
+	 * @return int
+	 */
+	public function printFieldListTitle($parameters, &$object, &$action, $hookmanager)
+	{
+		global $langs;
+
+		$this->resprints = '';
+		if (($parameters['currentcontext'] ?? '') !== 'interventionlist') {
+			return 0;
+		}
+
+		$langs->load('fieldservice@fieldservice');
+		$this->resprints = '<td class="liste_titre">'.$langs->trans('FieldServiceBillingStatus').'</td>';
+		if (isset($parameters['totalarray']) && is_array($parameters['totalarray'])) {
+			$parameters['totalarray']['nbfield']++;
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Add billing-state value to each Intervention list row.
+	 *
+	 * @param array<string,mixed> $parameters Hook parameters
+	 * @param CommonObject $object List object
+	 * @param string|null $action Current action
+	 * @param HookManager $hookmanager Hook manager
+	 * @return int
+	 */
+	public function printFieldListValue($parameters, &$object, &$action, $hookmanager)
+	{
+		global $langs;
+
+		$this->resprints = '';
+		if (($parameters['currentcontext'] ?? '') !== 'interventionlist' || empty($parameters['obj']->rowid)) {
+			return 0;
+		}
+
+		$langs->load('fieldservice@fieldservice');
+
+		$state = new FieldServiceWorkOrderState($this->db);
+		$result = $state->fetchByIntervention((int) $parameters['obj']->rowid);
+		if ($result > 0) {
+			$billingStatus = (int) $state->billing_status;
+		} else {
+			$coreStatus = isset($parameters['obj']->fk_statut)
+				? (int) $parameters['obj']->fk_statut
+				: (isset($parameters['obj']->status) ? (int) $parameters['obj']->status : 0);
+			$billingStatus = ($coreStatus === 3)
+				? FieldServiceWorkOrderState::BILLING_PENDING
+				: FieldServiceWorkOrderState::BILLING_OPEN;
+		}
+
+		$label = $langs->trans($this->getBillingStatusLabelKey($billingStatus));
+		$this->resprints = '<td>'.dolGetStatus($label, $label, '', $this->getBillingStatusCode($billingStatus), 2).'</td>';
+
+		if (isset($parameters['totalarray']) && is_array($parameters['totalarray']) && empty($parameters['i'])) {
+			$parameters['totalarray']['nbfield']++;
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Return translation key for a billing state.
+	 *
+	 * @param int $status Billing state
+	 * @return string
+	 */
+	private function getBillingStatusLabelKey($status)
+	{
+		switch ((int) $status) {
+			case FieldServiceWorkOrderState::BILLING_PENDING:
+				return 'FieldServiceBillingPending';
+			case FieldServiceWorkOrderState::BILLING_PARTIAL:
+				return 'FieldServiceBillingPartial';
+			case FieldServiceWorkOrderState::BILLING_INVOICED:
+				return 'FieldServiceBillingInvoiced';
+			case FieldServiceWorkOrderState::BILLING_NOT_BILLABLE:
+				return 'FieldServiceBillingNotBillable';
+			case FieldServiceWorkOrderState::BILLING_OPEN:
+			default:
+				return 'FieldServiceBillingOpen';
+		}
+	}
+
+	/**
+	 * Return Dolibarr status color code.
+	 *
+	 * @param int $status Billing state
+	 * @return string
+	 */
+	private function getBillingStatusCode($status)
+	{
+		switch ((int) $status) {
+			case FieldServiceWorkOrderState::BILLING_PENDING:
+				return 'status1';
+			case FieldServiceWorkOrderState::BILLING_PARTIAL:
+				return 'status3';
+			case FieldServiceWorkOrderState::BILLING_INVOICED:
+				return 'status6';
+			case FieldServiceWorkOrderState::BILLING_NOT_BILLABLE:
+				return 'status4';
+			case FieldServiceWorkOrderState::BILLING_OPEN:
+			default:
+				return 'status0';
+		}
+	}
+}

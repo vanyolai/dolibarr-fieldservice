@@ -1,0 +1,3 @@
+ALTER TABLE llx_fieldservice_material_shipment ADD UNIQUE INDEX uk_fieldservice_material_shipment_material (fk_material);
+ALTER TABLE llx_fieldservice_material_shipment ADD INDEX idx_fieldservice_material_shipment_expedition (fk_expedition);
+ALTER TABLE llx_fieldservice_material_shipment ADD INDEX idx_fieldservice_material_shipment_line (fk_expeditiondet);
