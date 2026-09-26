@@ -596,10 +596,13 @@ print '</table>';
 print '</div>';
 
 if (is_object($allocmaterial) && is_object($allocproduct)) {
-	$currentAllocations = $allocation->fetchAllByMaterial($allocmaterial->id);
-	if (!is_array($currentAllocations)) {
-		setEventMessages($allocation->error, $allocation->errors, 'errors');
-		$currentAllocations = array();
+	$currentAllocations = array();
+	if (!empty($allocmaterial->id)) {
+		$currentAllocations = $allocation->fetchAllByMaterial($allocmaterial->id);
+		if (!is_array($currentAllocations)) {
+			setEventMessages($allocation->error, $allocation->errors, 'errors');
+			$currentAllocations = array();
+		}
 	}
 
 	$availableBatches = $allocation->getAvailableBatches((int) $allocmaterial->fk_product, (int) $allocmaterial->fk_entrepot);
@@ -643,8 +646,17 @@ if (is_object($allocmaterial) && is_object($allocproduct)) {
 
 	print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'?id='.$object->id.'">';
 	print '<input type="hidden" name="token" value="'.newToken().'">';
-	print '<input type="hidden" name="action" value="saveallocation">';
-	print '<input type="hidden" name="materialid" value="'.$allocmaterial->id.'">';
+	if (!empty($allocmaterial->id)) {
+		print '<input type="hidden" name="action" value="saveallocation">';
+		print '<input type="hidden" name="materialid" value="'.$allocmaterial->id.'">';
+	} else {
+		print '<input type="hidden" name="action" value="addallocated">';
+		print '<input type="hidden" name="fk_product" value="'.((int) $allocmaterial->fk_product).'">';
+		print '<input type="hidden" name="fk_entrepot" value="'.((int) $allocmaterial->fk_entrepot).'">';
+		print '<input type="hidden" name="qty" value="'.dol_escape_htmltag((string) $allocmaterial->qty, 1).'">';
+		print '<input type="hidden" name="date_use_ts" value="'.((int) $allocmaterial->date_use).'">';
+		print '<input type="hidden" name="description" value="'.dol_escape_htmltag((string) $allocmaterial->description, 1).'">';
+	}
 
 	if ((int) $allocproduct->status_batch === 2) {
 		$submittedSelection = GETPOST('serial_select', 'array');
