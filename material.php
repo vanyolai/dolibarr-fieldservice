@@ -61,6 +61,8 @@ $form = new Form($db);
 $formproduct = new FormProduct($db);
 $material = new FieldServiceMaterial($db);
 $allocation = new FieldServiceMaterialAllocation($db);
+$allocmaterial = null;
+$allocproduct = null;
 
 /*
  * Actions
@@ -110,14 +112,78 @@ if ($action === 'add') {
 		$material->description = $description;
 		$material->fk_user_create = $user->id;
 
-		$result = $material->create($user);
-		if ($result > 0) {
-			setEventMessages($langs->trans('FieldServiceMaterialAdded'), null, 'mesgs');
-			header('Location: '.$_SERVER['PHP_SELF'].'?id='.$object->id);
-			exit;
-		}
+		if ($product->hasbatch()) {
+			if (!isModEnabled('productbatch')) {
+				setEventMessages($langs->trans('FieldServiceBatchModuleRequired'), null, 'errors');
+			} else {
+				// Do not create an incomplete material row. A LOT/SN-managed product
+				// becomes persistent only together with a complete allocation.
+				$allocmaterial = $material;
+				$allocproduct = $product;
+				$action = 'prepareadd';
+			}
+		} else {
+			$result = $material->create($user);
+			if ($result > 0) {
+				setEventMessages($langs->trans('FieldServiceMaterialAdded'), null, 'mesgs');
+				header('Location: '.$_SERVER['PHP_SELF'].'?id='.$object->id);
+				exit;
+			}
 
-		setEventMessages($material->error, $material->errors, 'errors');
+			setEventMessages($material->error, $material->errors, 'errors');
+		}
+	}
+}
+
+if ($action === 'addallocated') {
+	if (!$user->hasRight('fieldservice', 'materials', 'write')) {
+		accessforbidden();
+	}
+
+	$productid = GETPOSTINT('fk_product');
+	$warehouseid = GETPOSTINT('fk_entrepot');
+	$qty = GETPOSTFLOAT('qty');
+	$description = GETPOST('description', 'restricthtml');
+	$dateuse = GETPOSTINT('date_use_ts');
+
+	$error = 0;
+	$product = new Product($db);
+	$warehouse = new Entrepot($db);
+
+	if ($productid <= 0 || $product->fetch($productid) <= 0 || (int) $product->type !== 0) {
+		setEventMessages($langs->trans('ErrorFieldRequired', $langs->trans('Product')), null, 'errors');
+		$error++;
+	}
+	if ($warehouseid <= 0 || $warehouse->fetch($warehouseid) <= 0 || empty($warehouse->statut)) {
+		setEventMessages($langs->trans('ErrorFieldRequired', $langs->trans('Warehouse')), null, 'errors');
+		$error++;
+	}
+	if ($qty <= 0) {
+		setEventMessages($langs->trans('ErrorEmptyValueForQty'), null, 'errors');
+		$error++;
+	}
+	if (empty($dateuse)) {
+		setEventMessages($langs->trans('ErrorFieldRequired', $langs->trans('Date')), null, 'errors');
+		$error++;
+	}
+	if (!$error && (!isModEnabled('productbatch') || !$product->hasbatch())) {
+		setEventMessages($langs->trans('ProductDoesNotUseBatchSerial'), null, 'errors');
+		$error++;
+	}
+
+	if (!$error) {
+		$allocmaterial = new FieldServiceMaterial($db);
+		$allocmaterial->entity = $conf->entity;
+		$allocmaterial->fk_fichinter = $object->id;
+		$allocmaterial->fk_product = $productid;
+		$allocmaterial->fk_entrepot = $warehouseid;
+		$allocmaterial->qty = $qty;
+		$allocmaterial->fk_unit = null;
+		$allocmaterial->date_use = $dateuse;
+		$allocmaterial->status = FieldServiceMaterial::STATUS_DRAFT;
+		$allocmaterial->description = $description;
+		$allocmaterial->fk_user_create = $user->id;
+		$allocproduct = $product;
 	}
 }
 
@@ -232,9 +298,6 @@ if ($action === 'delete' && $materialid > 0) {
 	exit;
 }
 
-$allocmaterial = null;
-$allocproduct = null;
-
 if (($action === 'allocate' || $action === 'saveallocation') && $materialid > 0) {
 	if (!$user->hasRight('fieldservice', 'materials', 'write')) {
 		accessforbidden();
@@ -261,7 +324,7 @@ if (($action === 'allocate' || $action === 'saveallocation') && $materialid > 0)
 	}
 }
 
-if ($action === 'saveallocation' && is_object($allocmaterial) && is_object($allocproduct)) {
+if (($action === 'saveallocation' || $action === 'addallocated') && is_object($allocmaterial) && is_object($allocproduct)) {
 	$availableBatches = $allocation->getAvailableBatches((int) $allocmaterial->fk_product, (int) $allocmaterial->fk_entrepot);
 	if (!is_array($availableBatches)) {
 		setEventMessages($allocation->error, $allocation->errors, 'errors');
@@ -361,8 +424,14 @@ if ($action === 'saveallocation' && is_object($allocmaterial) && is_object($allo
 	}
 
 	if (!$error) {
+		$isNewMaterial = ($action === 'addallocated');
+
 		$db->begin();
-		$result = $allocation->deleteDraftByMaterial($allocmaterial->id);
+		if ($isNewMaterial) {
+			$result = $allocmaterial->create($user);
+		} else {
+			$result = $allocation->deleteDraftByMaterial($allocmaterial->id);
+		}
 
 		if ($result > 0) {
 			foreach ($newAllocations as $allocationData) {
@@ -384,16 +453,20 @@ if ($action === 'saveallocation' && is_object($allocmaterial) && is_object($allo
 
 		if ($result > 0) {
 			$db->commit();
-			setEventMessages($langs->trans('FieldServiceAllocationSaved'), null, 'mesgs');
+			setEventMessages($langs->trans($isNewMaterial ? 'FieldServiceMaterialAdded' : 'FieldServiceAllocationSaved'), null, 'mesgs');
 			header('Location: '.$_SERVER['PHP_SELF'].'?id='.$object->id);
 			exit;
 		}
 
 		$db->rollback();
-		setEventMessages($allocation->error, $allocation->errors, 'errors');
+		if ($isNewMaterial) {
+			// The insert was rolled back; keep the object transient for re-rendering.
+			$allocmaterial->id = 0;
+		}
+		setEventMessages($allocmaterial->error ?: $allocation->error, array_merge($allocmaterial->errors, $allocation->errors), 'errors');
 	}
 
-	$action = 'allocate';
+	$action = ($action === 'addallocated') ? 'prepareadd' : 'allocate';
 }
 
 $editmaterial = null;
