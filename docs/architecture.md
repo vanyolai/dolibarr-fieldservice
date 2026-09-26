@@ -79,8 +79,8 @@ The original material usage remains in history, but compensating core stock move
 
 1. Technician selects a source warehouse (often their service vehicle).
 2. Technician adds a product and quantity.
-3. If the product is lot/serial managed, Field Service requires allocations from currently available core stock.
-4. The line remains Draft until the user explicitly posts material usage.
+3. If the product is lot/serial managed, Field Service requires allocations from currently available core stock. Draft allocations are selections only; they do not reserve stock.
+4. The line remains Draft until the user explicitly posts material usage. Posting must revalidate current stock and every lot/serial allocation immediately before creating stock movements.
 5. Posting validates the complete allocation and calls Dolibarr `MouvementStock` methods inside a transaction.
 6. Each resulting stock movement id is recorded on its allocation.
 7. Only after every allocation succeeds does the material line become Posted.
