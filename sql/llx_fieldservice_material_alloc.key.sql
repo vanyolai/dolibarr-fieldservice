@@ -1,0 +1,4 @@
+ALTER TABLE llx_fieldservice_material_alloc ADD INDEX idx_fieldservice_material_alloc_material (fk_material);
+ALTER TABLE llx_fieldservice_material_alloc ADD INDEX idx_fieldservice_material_alloc_batch (batch);
+ALTER TABLE llx_fieldservice_material_alloc ADD INDEX idx_fieldservice_material_alloc_stock_movement (fk_stock_movement);
+ALTER TABLE llx_fieldservice_material_alloc ADD INDEX idx_fieldservice_material_alloc_reverse_movement (fk_reverse_stock_movement);
