@@ -57,3 +57,7 @@ FieldServiceOrderThirdPartyMismatch=A kapcsolódó rendelés másik partnerhez t
 FieldServiceInconsistent=Inkonzisztens
 FieldServicePostedShipmentMissing=Van készletből kiadott anyag, amelyhez a kapcsolódó szállítólevél vagy szállítólevél-sor már nem létezik. Az automatikus újraszinkronizálás nem biztonságos; előbb a készletmozgást kell rendezni.
 FieldServiceFinalizedShipmentDeleteBlocked=Lezárt vagy hitelesített Field Service szállítólevél nem törölhető, mert készletmozgást és auditnyomot tartalmazhat. Csak piszkozat Field Service szállítólevél törölhető.
+FieldServiceStandaloneShipmentDisabled=Rendelés nélküli Field Service munkalaphoz önálló szállítólevél szükséges. Az anyagok szinkronizálása előtt engedélyezze a SHIPMENT_STANDALONE beállítást.
+FieldServiceMultipleOrdersRequireSelection=Több vevői rendelés kapcsolódik ehhez a munkalaphoz. A Field Service nem találgatja, melyik rendeléshez tartozik az anyag; a szállítólevél szinkronizálása előtt ki kell választani a rendelést.
+FieldServiceShipmentLineProtected=A Field Service által kezelt szállítólevél sorai közvetlenül a szállítólevélen nem adhatók hozzá, nem módosíthatók, nem törölhetők és nem allokálhatók át. Az anyagfelhasználást a munkalapon módosítsa.
+FieldServiceShipmentIntegrityFailed=A Field Service anyagadatai már nem egyeznek a kapcsolódó szállítólevéllel. A munkalap lezárása még újabb szállítólevél-készletmozgás előtt blokkolva lett.
