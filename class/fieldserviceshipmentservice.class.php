@@ -74,6 +74,12 @@ class FieldServiceShipmentService
 			}
 		}
 
+		if (count($orderIds) > 1) {
+			$this->error = 'FieldServiceMultipleOrdersRequireSelection';
+			$this->errors = array(implode(', ', array_map('strval', array_values($orderIds))));
+			return -1;
+		}
+
 		return count($orderIds) === 1 ? (int) reset($orderIds) : 0;
 	}
 
@@ -159,6 +165,11 @@ class FieldServiceShipmentService
 	 */
 	public function createDraftShipment(Fichinter $workOrder, User $user, $orderId = 0)
 	{
+		if ($orderId <= 0 && !getDolGlobalString('SHIPMENT_STANDALONE')) {
+			$this->error = 'FieldServiceStandaloneShipmentDisabled';
+			return false;
+		}
+
 		$shipment = new Expedition($this->db);
 		$shipment->socid = (int) $workOrder->socid;
 		$shipment->fk_project = (int) $workOrder->fk_project;
@@ -291,7 +302,7 @@ class FieldServiceShipmentService
 
 		$line = new ExpeditionLigne($this->db);
 		if ($line->fetch((int) $mapping->fk_expeditiondet) > 0) {
-			$result = $line->delete($user);
+			$result = $line->delete($user, 1);
 			if ($result < 0) {
 				$this->error = $line->error;
 				$this->errors = $line->errors;
@@ -361,7 +372,7 @@ class FieldServiceShipmentService
 			$line->origin_line_id = (int) $material->fk_origin_line;
 		}
 
-		$lineId = $line->insert($user);
+		$lineId = $line->insert($user, 1);
 		if ($lineId <= 0) {
 			$this->error = $line->error;
 			$this->errors = $line->errors;
@@ -374,6 +385,7 @@ class FieldServiceShipmentService
 			if (!is_array($allocations)) {
 				$this->error = $allocation->error;
 				$this->errors = $allocation->errors;
+				$this->cleanupCreatedShipmentLine($lineId, $user);
 				return -1;
 			}
 
@@ -384,11 +396,13 @@ class FieldServiceShipmentService
 				if ($result <= 0 || empty($stockBatch->id)) {
 					$this->error = 'FieldServiceLotSerialNotAvailable';
 					$this->errors[] = (string) $allocationRow->batch;
+					$this->cleanupCreatedShipmentLine($lineId, $user);
 					return -1;
 				}
 				if ((float) $stockBatch->qty + 0.00000001 < (float) $allocationRow->qty) {
 					$this->error = 'FieldServiceAllocationExceedsStock';
 					$this->errors[] = (string) $allocationRow->batch;
+					$this->cleanupCreatedShipmentLine($lineId, $user);
 					return -1;
 				}
 
@@ -400,10 +414,11 @@ class FieldServiceShipmentService
 				$batchLine->fk_origin_stock = (int) $stockBatch->id;
 				$batchLine->fk_warehouse = (int) $material->fk_entrepot;
 
-				$result = $batchLine->create($lineId, $user);
+				$result = $batchLine->create($lineId, $user, 1);
 				if ($result <= 0) {
 					$this->error = $batchLine->error;
 					$this->errors = $batchLine->errors;
+					$this->cleanupCreatedShipmentLine($lineId, $user);
 					return -1;
 				}
 				$allocatedQty += (float) $allocationRow->qty;
@@ -411,6 +426,7 @@ class FieldServiceShipmentService
 
 			if (abs($allocatedQty - (float) $material->qty) > 0.00000001) {
 				$this->error = 'FieldServiceAllocationMustMatchQty';
+				$this->cleanupCreatedShipmentLine($lineId, $user);
 				return -1;
 			}
 		}
@@ -420,10 +436,26 @@ class FieldServiceShipmentService
 		$sql .= ' VALUES ('.((int) $material->id).', '.((int) $shipment->id).', '.((int) $lineId).", '".$this->db->idate(dol_now())."')";
 		if (!$this->db->query($sql)) {
 			$this->error = $this->db->lasterror();
+			$this->cleanupCreatedShipmentLine($lineId, $user);
 			return -1;
 		}
 
 		return 1;
+	}
+
+	/**
+	 * Best-effort cleanup after a failed material-to-Shipment synchronization.
+	 *
+	 * @param int $lineId Newly created Shipment line id
+	 * @param User $user Acting user
+	 * @return void
+	 */
+	private function cleanupCreatedShipmentLine($lineId, User $user)
+	{
+		$line = new ExpeditionLigne($this->db);
+		if ($line->fetch((int) $lineId) > 0 && $line->delete($user, 1) < 0) {
+			$this->errors[] = 'Failed to clean up Shipment line #'.((int) $lineId).': '.$line->error;
+		}
 	}
 
 	/**
@@ -437,6 +469,31 @@ class FieldServiceShipmentService
 		$sql = 'SELECT rowid';
 		$sql .= ' FROM '.$this->db->prefix().'fieldservice_workorder_shipment';
 		$sql .= ' WHERE fk_expedition = '.((int) $shipmentId);
+		$sql .= $this->db->plimit(1);
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+
+		$mapped = $this->db->num_rows($resql) > 0 ? 1 : 0;
+		$this->db->free($resql);
+		return $mapped;
+	}
+
+	/**
+	 * Check whether a Shipment line belongs to a Field Service managed Shipment.
+	 *
+	 * @param int $shipmentLineId Shipment line id
+	 * @return int<-1,1> 1 mapped, 0 not mapped, negative on error
+	 */
+	public function isLineOnMappedShipment($shipmentLineId)
+	{
+		$sql = 'SELECT fws.rowid';
+		$sql .= ' FROM '.$this->db->prefix().'expeditiondet as ed';
+		$sql .= ' INNER JOIN '.$this->db->prefix().'fieldservice_workorder_shipment as fws ON fws.fk_expedition = ed.fk_expedition';
+		$sql .= ' WHERE ed.rowid = '.((int) $shipmentLineId);
 		$sql .= $this->db->plimit(1);
 
 		$resql = $this->db->query($sql);
@@ -652,6 +709,201 @@ class FieldServiceShipmentService
 		return ((int) $obj->material_count === (int) $obj->mapped_count) ? 1 : 0;
 	}
 
+
+	/**
+	 * Verify that Field Service material rows still match their Shipment representation.
+	 *
+	 * This is a finalization gate. It checks the physical provenance used by
+	 * Dolibarr stock movements before Shipment validation/closing can mutate stock.
+	 *
+	 * @param int $fichinterId Intervention id
+	 * @return int<-1,1>
+	 */
+	public function validateWorkOrderShipmentIntegrity($fichinterId)
+	{
+		$sql = 'SELECT ed.rowid';
+		$sql .= ' FROM '.$this->db->prefix().'fieldservice_workorder_shipment as fws';
+		$sql .= ' INNER JOIN '.$this->db->prefix().'expeditiondet as ed ON ed.fk_expedition = fws.fk_expedition';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'fieldservice_material_shipment as fms';
+		$sql .= ' ON fms.fk_expedition = ed.fk_expedition AND fms.fk_expeditiondet = ed.rowid';
+		$sql .= ' WHERE fws.fk_fichinter = '.((int) $fichinterId);
+		$sql .= ' AND fms.rowid IS NULL';
+		$sql .= $this->db->plimit(1);
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+		$unmanagedLine = $this->db->fetch_object($resql);
+		$this->db->free($resql);
+		if ($unmanagedLine) {
+			return $this->failShipmentIntegrity(0, 'unmanaged shipment line #'.((int) $unmanagedLine->rowid));
+		}
+
+		$sql = 'SELECT fm.rowid as material_id, fm.fk_product as material_product,';
+		$sql .= ' fm.fk_entrepot as material_warehouse, fm.qty as material_qty,';
+		$sql .= ' fm.origin_type as material_origin_type, fm.fk_origin_line as material_origin_line,';
+		$sql .= ' fms.fk_expedition, fms.fk_expeditiondet,';
+		$sql .= ' e.rowid as shipment_id, e.fk_statut as shipment_status, ed.rowid as shipment_line_id,';
+		$sql .= ' ed.fk_product as line_product, ed.fk_entrepot as line_warehouse,';
+		$sql .= ' ed.qty as line_qty, ed.element_type as line_element_type, ed.fk_elementdet as line_origin_line';
+		$sql .= ' FROM '.$this->db->prefix().'fieldservice_material as fm';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'fieldservice_material_shipment as fms ON fms.fk_material = fm.rowid';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expedition as e ON e.rowid = fms.fk_expedition';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expeditiondet as ed';
+		$sql .= ' ON ed.rowid = fms.fk_expeditiondet AND ed.fk_expedition = fms.fk_expedition';
+		$sql .= ' WHERE fm.fk_fichinter = '.((int) $fichinterId);
+		$sql .= ' ORDER BY fm.rowid ASC';
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+
+		while ($obj = $this->db->fetch_object($resql)) {
+			$materialId = (int) $obj->material_id;
+			if (empty($obj->shipment_id) || empty($obj->shipment_line_id)) {
+				$this->db->free($resql);
+				return $this->failShipmentIntegrity($materialId, 'missing shipment or shipment line');
+			}
+			if ((int) $obj->material_product !== (int) $obj->line_product) {
+				$this->db->free($resql);
+				return $this->failShipmentIntegrity($materialId, 'product mismatch');
+			}
+			if ((int) $obj->material_warehouse !== (int) $obj->line_warehouse) {
+				$this->db->free($resql);
+				return $this->failShipmentIntegrity($materialId, 'warehouse mismatch');
+			}
+			if (abs((float) $obj->material_qty - (float) $obj->line_qty) > 0.00000001) {
+				$this->db->free($resql);
+				return $this->failShipmentIntegrity($materialId, 'quantity mismatch');
+			}
+
+			$hasOrderOrigin = ((string) $obj->material_origin_type === 'commande' && !empty($obj->material_origin_line));
+			if ($hasOrderOrigin) {
+				if ((string) $obj->line_element_type !== 'commande' || (int) $obj->line_origin_line !== (int) $obj->material_origin_line) {
+					$this->db->free($resql);
+					return $this->failShipmentIntegrity($materialId, 'order-line provenance mismatch');
+				}
+			} elseif (!empty($obj->line_origin_line)) {
+				$this->db->free($resql);
+				return $this->failShipmentIntegrity($materialId, 'unexpected order-line provenance');
+			}
+
+			$product = new Product($this->db);
+			if ($product->fetch((int) $obj->material_product, '', '', '', 1, 1, 1) <= 0) {
+				$this->db->free($resql);
+				$this->error = $product->error;
+				$this->errors = $product->errors;
+				return -1;
+			}
+
+			$shipmentBatch = new ExpeditionLineBatch($this->db);
+			$shipmentBatches = $shipmentBatch->fetchAll((int) $obj->shipment_line_id, (int) $obj->material_product);
+			if (!is_array($shipmentBatches)) {
+				$this->db->free($resql);
+				$this->error = $shipmentBatch->error;
+				$this->errors = $shipmentBatch->errors;
+				return -1;
+			}
+
+			if ($product->hasbatch()) {
+				if (!isModEnabled('productbatch')) {
+					$this->db->free($resql);
+					return $this->failShipmentIntegrity($materialId, 'lot/serial module disabled');
+				}
+				$allocation = new FieldServiceMaterialAllocation($this->db);
+				$allocations = $allocation->fetchAllByMaterial($materialId);
+				if (!is_array($allocations)) {
+					$this->db->free($resql);
+					$this->error = $allocation->error;
+					$this->errors = $allocation->errors;
+					return -1;
+				}
+
+				$expected = array();
+				foreach ($allocations as $allocationRow) {
+					$batch = (string) $allocationRow->batch;
+					if ($batch === '') {
+						$this->db->free($resql);
+						return $this->failShipmentIntegrity($materialId, 'empty lot/serial allocation');
+					}
+					if (!isset($expected[$batch])) {
+						$expected[$batch] = 0.0;
+					}
+					$expected[$batch] += (float) $allocationRow->qty;
+				}
+
+				$actual = array();
+				foreach ($shipmentBatches as $batchRow) {
+					$batch = (string) $batchRow->batch;
+					if ($batch === '' || (int) $batchRow->fk_warehouse !== (int) $obj->material_warehouse || empty($batchRow->fk_origin_stock)) {
+						$this->db->free($resql);
+						return $this->failShipmentIntegrity($materialId, 'invalid shipment lot/serial provenance');
+					}
+					if ((int) $obj->shipment_status === Expedition::STATUS_DRAFT) {
+						$stockBatch = new Productbatch($this->db);
+						if ($stockBatch->fetch((int) $batchRow->fk_origin_stock) <= 0
+							|| (int) $stockBatch->fk_product !== (int) $obj->material_product
+							|| (int) $stockBatch->warehouseid !== (int) $obj->material_warehouse
+							|| (string) $stockBatch->batch !== $batch
+							|| (float) $stockBatch->qty + 0.00000001 < (float) $batchRow->qty) {
+							$this->db->free($resql);
+							return $this->failShipmentIntegrity($materialId, 'shipment lot/serial stock origin mismatch');
+						}
+					}
+					if (!isset($actual[$batch])) {
+						$actual[$batch] = 0.0;
+					}
+					$actual[$batch] += (float) $batchRow->qty;
+				}
+
+				ksort($expected, SORT_NATURAL | SORT_FLAG_CASE);
+				ksort($actual, SORT_NATURAL | SORT_FLAG_CASE);
+				if (array_keys($expected) !== array_keys($actual)) {
+					$this->db->free($resql);
+					return $this->failShipmentIntegrity($materialId, 'lot/serial set mismatch');
+				}
+				foreach ($expected as $batch => $qty) {
+					if (!isset($actual[$batch]) || abs((float) $qty - (float) $actual[$batch]) > 0.00000001) {
+						$this->db->free($resql);
+						return $this->failShipmentIntegrity($materialId, 'lot/serial quantity mismatch');
+					}
+					if ((int) $product->status_batch === 2 && (abs((float) $qty - 1.0) > 0.00000001 || abs((float) $actual[$batch] - 1.0) > 0.00000001)) {
+						$this->db->free($resql);
+						return $this->failShipmentIntegrity($materialId, 'serial quantity must be one');
+					}
+				}
+				if (abs(array_sum($actual) - (float) $obj->material_qty) > 0.00000001) {
+					$this->db->free($resql);
+					return $this->failShipmentIntegrity($materialId, 'lot/serial total quantity mismatch');
+				}
+			} elseif (!empty($shipmentBatches)) {
+				$this->db->free($resql);
+				return $this->failShipmentIntegrity($materialId, 'unexpected lot/serial rows');
+			}
+		}
+		$this->db->free($resql);
+		return 1;
+	}
+
+	/**
+	 * Store a deterministic integrity failure.
+	 *
+	 * @param int $materialId Material row id, 0 for Shipment-level failure
+	 * @param string $reason Technical reason
+	 * @return int<-1,-1>
+	 */
+	private function failShipmentIntegrity($materialId, $reason)
+	{
+		$this->error = 'FieldServiceShipmentIntegrityFailed';
+		$prefix = $materialId > 0 ? 'Material #'.((int) $materialId).': ' : 'Shipment: ';
+		$this->errors = array($prefix.$reason);
+		return -1;
+	}
+
 	/**
 	 * Finalize all Shipments for a completed work order.
 	 *
@@ -671,6 +923,11 @@ class FieldServiceShipmentService
 		}
 		if ($syncComplete === 0) {
 			$this->error = 'FieldServiceMaterialsNotSyncedToShipment';
+			return -1;
+		}
+
+		$integrity = $this->validateWorkOrderShipmentIntegrity($workOrder->id);
+		if ($integrity < 0) {
 			return -1;
 		}
 
