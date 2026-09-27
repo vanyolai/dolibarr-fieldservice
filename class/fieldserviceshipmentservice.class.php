@@ -266,9 +266,23 @@ class FieldServiceShipmentService
 
 		$shipment = new Expedition($this->db);
 		if ($shipment->fetch((int) $mapping->fk_expedition) <= 0) {
-			$this->error = $shipment->error;
-			$this->errors = $shipment->errors;
-			return -1;
+			// The Shipment was deleted outside Field Service. Drop the stale
+			// mapping so the material can be synchronized to a new draft Shipment.
+			$sql = 'DELETE FROM '.$this->db->prefix().'fieldservice_material_shipment';
+			$sql .= ' WHERE rowid = '.((int) $mapping->rowid);
+			if (!$this->db->query($sql)) {
+				$this->error = $this->db->lasterror();
+				return -1;
+			}
+
+			$sql = 'DELETE FROM '.$this->db->prefix().'fieldservice_workorder_shipment';
+			$sql .= ' WHERE fk_expedition = '.((int) $mapping->fk_expedition);
+			if (!$this->db->query($sql)) {
+				$this->error = $this->db->lasterror();
+				return -1;
+			}
+
+			return 1;
 		}
 		if ((int) $shipment->status !== Expedition::STATUS_DRAFT) {
 			$this->error = 'FieldServiceShipmentNotDraft';
@@ -413,6 +427,159 @@ class FieldServiceShipmentService
 	}
 
 	/**
+	 * Remove Field Service mappings for a Shipment being deleted.
+	 *
+	 * The SHIPPING_DELETE trigger calls this inside the Shipment transaction,
+	 * so a failed core deletion also rolls back this cleanup.
+	 *
+	 * @param int $shipmentId Shipment id
+	 * @param User $user Acting user
+	 * @return int<-1,1>
+	 */
+	public function cleanupShipmentMappings($shipmentId, User $user)
+	{
+		$materialIds = array();
+
+		$sql = 'SELECT DISTINCT fms.fk_material';
+		$sql .= ' FROM '.$this->db->prefix().'fieldservice_material_shipment as fms';
+		$sql .= ' WHERE fms.fk_expedition = '.((int) $shipmentId);
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+		while ($obj = $this->db->fetch_object($resql)) {
+			$materialIds[] = (int) $obj->fk_material;
+		}
+		$this->db->free($resql);
+
+		if (!empty($materialIds)) {
+			$idList = implode(',', array_map('intval', $materialIds));
+
+			$sql = 'UPDATE '.$this->db->prefix().'fieldservice_material';
+			$sql .= ' SET status = '.FieldServiceMaterial::STATUS_DRAFT;
+			$sql .= ', fk_user_modif = '.((int) $user->id);
+			$sql .= ' WHERE rowid IN ('.$idList.')';
+			if (!$this->db->query($sql)) {
+				$this->error = $this->db->lasterror();
+				return -1;
+			}
+
+			$sql = 'UPDATE '.$this->db->prefix().'fieldservice_material_alloc';
+			$sql .= ' SET date_posted = NULL, fk_user_posted = NULL';
+			$sql .= ' WHERE fk_material IN ('.$idList.')';
+			if (!$this->db->query($sql)) {
+				$this->error = $this->db->lasterror();
+				return -1;
+			}
+		}
+
+		$sql = 'DELETE FROM '.$this->db->prefix().'fieldservice_material_shipment';
+		$sql .= ' WHERE fk_expedition = '.((int) $shipmentId);
+		if (!$this->db->query($sql)) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+
+		$sql = 'DELETE FROM '.$this->db->prefix().'fieldservice_workorder_shipment';
+		$sql .= ' WHERE fk_expedition = '.((int) $shipmentId);
+		if (!$this->db->query($sql)) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+
+		return 1;
+	}
+
+	/**
+	 * Repair mappings whose Shipment or Shipment line no longer exists.
+	 *
+	 * This handles historical inconsistent states created before the
+	 * SHIPPING_DELETE cleanup trigger was added.
+	 *
+	 * @param int $fichinterId Intervention id
+	 * @param User $user Acting user
+	 * @return int<-1,max> Number of repaired material mappings, or negative on error
+	 */
+	public function repairMissingShipmentMappings($fichinterId, User $user)
+	{
+		$mappingIds = array();
+		$materialIds = array();
+		$missingShipmentIds = array();
+
+		$sql = 'SELECT fms.rowid as mapping_id, fms.fk_material, fms.fk_expedition, e.rowid as expedition_exists';
+		$sql .= ' FROM '.$this->db->prefix().'fieldservice_material_shipment as fms';
+		$sql .= ' INNER JOIN '.$this->db->prefix().'fieldservice_material as fm ON fm.rowid = fms.fk_material';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expedition as e ON e.rowid = fms.fk_expedition';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expeditiondet as ed';
+		$sql .= ' ON ed.rowid = fms.fk_expeditiondet AND ed.fk_expedition = fms.fk_expedition';
+		$sql .= ' WHERE fm.fk_fichinter = '.((int) $fichinterId);
+		$sql .= ' AND (e.rowid IS NULL OR ed.rowid IS NULL)';
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+
+		while ($obj = $this->db->fetch_object($resql)) {
+			$mappingIds[] = (int) $obj->mapping_id;
+			$materialIds[] = (int) $obj->fk_material;
+			if (empty($obj->expedition_exists)) {
+				$missingShipmentIds[] = (int) $obj->fk_expedition;
+			}
+		}
+		$this->db->free($resql);
+
+		$mappingIds = array_values(array_unique($mappingIds));
+		$materialIds = array_values(array_unique($materialIds));
+		$missingShipmentIds = array_values(array_unique($missingShipmentIds));
+
+		if (empty($mappingIds)) {
+			return 0;
+		}
+
+		$mappingList = implode(',', array_map('intval', $mappingIds));
+		$materialList = implode(',', array_map('intval', $materialIds));
+
+		$sql = 'DELETE FROM '.$this->db->prefix().'fieldservice_material_shipment';
+		$sql .= ' WHERE rowid IN ('.$mappingList.')';
+		if (!$this->db->query($sql)) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+
+		$sql = 'UPDATE '.$this->db->prefix().'fieldservice_material';
+		$sql .= ' SET status = '.FieldServiceMaterial::STATUS_DRAFT;
+		$sql .= ', fk_user_modif = '.((int) $user->id);
+		$sql .= ' WHERE rowid IN ('.$materialList.')';
+		if (!$this->db->query($sql)) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+
+		$sql = 'UPDATE '.$this->db->prefix().'fieldservice_material_alloc';
+		$sql .= ' SET date_posted = NULL, fk_user_posted = NULL';
+		$sql .= ' WHERE fk_material IN ('.$materialList.')';
+		if (!$this->db->query($sql)) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+
+		if (!empty($missingShipmentIds)) {
+			$shipmentList = implode(',', array_map('intval', $missingShipmentIds));
+			$sql = 'DELETE FROM '.$this->db->prefix().'fieldservice_workorder_shipment';
+			$sql .= ' WHERE fk_expedition IN ('.$shipmentList.')';
+			if (!$this->db->query($sql)) {
+				$this->error = $this->db->lasterror();
+				return -1;
+			}
+		}
+
+		return count($mappingIds);
+	}
+
+	/**
 	 * Return all Shipments mapped to an Intervention.
 	 *
 	 * @param int $fichinterId Intervention id
@@ -437,10 +604,10 @@ class FieldServiceShipmentService
 			$shipment = new Expedition($this->db);
 			$fetchResult = $shipment->fetch((int) $obj->fk_expedition);
 			if ($fetchResult <= 0) {
-				$this->error = $shipment->error;
-				$this->errors = $shipment->errors;
-				$this->db->free($resql);
-				return false;
+				// Keep the read path usable even if somebody deleted a mapped
+				// Shipment directly from Dolibarr. isMaterialSyncComplete() will
+				// flag the broken mapping and offer synchronization/repair.
+				continue;
 			}
 			$result[] = array(
 				'shipment' => $shipment,
@@ -460,9 +627,13 @@ class FieldServiceShipmentService
 	 */
 	public function isMaterialSyncComplete($fichinterId)
 	{
-		$sql = 'SELECT COUNT(fm.rowid) as material_count, COUNT(fms.rowid) as mapped_count';
+		$sql = 'SELECT COUNT(DISTINCT fm.rowid) as material_count,';
+		$sql .= ' COUNT(DISTINCT CASE WHEN e.rowid IS NOT NULL AND ed.rowid IS NOT NULL THEN fm.rowid END) as mapped_count';
 		$sql .= ' FROM '.$this->db->prefix().'fieldservice_material as fm';
 		$sql .= ' LEFT JOIN '.$this->db->prefix().'fieldservice_material_shipment as fms ON fms.fk_material = fm.rowid';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expedition as e ON e.rowid = fms.fk_expedition';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expeditiondet as ed';
+		$sql .= ' ON ed.rowid = fms.fk_expeditiondet AND ed.fk_expedition = fms.fk_expedition';
 		$sql .= ' WHERE fm.fk_fichinter = '.((int) $fichinterId);
 
 		$resql = $this->db->query($sql);
@@ -572,6 +743,11 @@ class FieldServiceShipmentService
 	 */
 	public function syncAllMaterials(Fichinter $workOrder, User $user)
 	{
+		$result = $this->repairMissingShipmentMappings($workOrder->id, $user);
+		if ($result < 0) {
+			return -1;
+		}
+
 		$material = new FieldServiceMaterial($this->db);
 		$materials = $material->fetchAllByIntervention($workOrder->id);
 		if (!is_array($materials)) {
