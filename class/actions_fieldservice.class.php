@@ -62,16 +62,13 @@ class ActionsFieldService extends CommonHookActions
 
 		$state = new FieldServiceWorkOrderState($this->db);
 		$result = $state->fetchByIntervention((int) $object->id);
-
-		// A pre-Field-Service work order has no metadata row yet. If it is already
-		// operationally completed, present it as ready to invoice until persisted.
-		if ($result <= 0) {
-			$billingStatus = ((int) $object->status === 3)
-				? FieldServiceWorkOrderState::BILLING_PENDING
-				: FieldServiceWorkOrderState::BILLING_OPEN;
-		} else {
-			$billingStatus = (int) $state->billing_status;
-		}
+		$storedStatus = $result > 0 ? (int) $state->billing_status : null;
+		$billingStatus = $this->resolveBillingStatus(
+			(int) $object->status,
+			property_exists($object, 'billed'),
+			property_exists($object, 'billed') ? (int) $object->billed : 0,
+			$storedStatus
+		);
 
 		$labelKey = $this->getBillingStatusLabelKey($billingStatus);
 		$label = $langs->trans($labelKey);
@@ -134,16 +131,17 @@ class ActionsFieldService extends CommonHookActions
 
 		$state = new FieldServiceWorkOrderState($this->db);
 		$result = $state->fetchByIntervention((int) $parameters['obj']->rowid);
-		if ($result > 0) {
-			$billingStatus = (int) $state->billing_status;
-		} else {
-			$coreStatus = isset($parameters['obj']->fk_statut)
-				? (int) $parameters['obj']->fk_statut
-				: (isset($parameters['obj']->status) ? (int) $parameters['obj']->status : 0);
-			$billingStatus = ($coreStatus === 3)
-				? FieldServiceWorkOrderState::BILLING_PENDING
-				: FieldServiceWorkOrderState::BILLING_OPEN;
-		}
+		$storedStatus = $result > 0 ? (int) $state->billing_status : null;
+		$coreStatus = isset($parameters['obj']->fk_statut)
+			? (int) $parameters['obj']->fk_statut
+			: (isset($parameters['obj']->status) ? (int) $parameters['obj']->status : 0);
+		$coreBilledAvailable = property_exists($parameters['obj'], 'billed');
+		$billingStatus = $this->resolveBillingStatus(
+			$coreStatus,
+			$coreBilledAvailable,
+			$coreBilledAvailable ? (int) $parameters['obj']->billed : 0,
+			$storedStatus
+		);
 
 		$label = $langs->trans($this->getBillingStatusLabelKey($billingStatus));
 		$this->resprints = '<td>'.dolGetStatus($label, $label, '', $this->getBillingStatusCode($billingStatus), 2).'</td>';
@@ -153,6 +151,34 @@ class ActionsFieldService extends CommonHookActions
 		}
 
 		return 0;
+	}
+
+	/**
+	 * Resolve the effective Field Service billing state.
+	 *
+	 * When the core Fichinter exposes a dedicated billed flag, billed=1 is
+	 * authoritative. Otherwise the module keeps its standalone behaviour, so
+	 * the core enhancement remains optional.
+	 *
+	 * @param int $coreStatus Fichinter operational status
+	 * @param bool $coreBilledAvailable Whether the core billed flag exists
+	 * @param int $coreBilled Core billed flag
+	 * @param int|null $storedStatus Stored Field Service billing status
+	 * @return int
+	 */
+	private function resolveBillingStatus($coreStatus, $coreBilledAvailable, $coreBilled, $storedStatus)
+	{
+		if ($coreBilledAvailable && $coreBilled) {
+			return FieldServiceWorkOrderState::BILLING_INVOICED;
+		}
+
+		if ($storedStatus !== null) {
+			return (int) $storedStatus;
+		}
+
+		return ((int) $coreStatus === 3)
+			? FieldServiceWorkOrderState::BILLING_PENDING
+			: FieldServiceWorkOrderState::BILLING_OPEN;
 	}
 
 	/**
