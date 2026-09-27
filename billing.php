@@ -37,7 +37,13 @@ print load_fiche_titre($langs->trans('FieldServiceBillingQueue'), '', 'bill');
 
 print '<div class="opacitymedium marginbottomonly">'.$langs->trans('FieldServiceBillingQueueHelp').'</div>';
 
+$fichinterProbe = new Fichinter($db);
+$hasCoreBilled = isset($fichinterProbe->fields['facture']) && property_exists($fichinterProbe, 'billed');
+
 $sql = 'SELECT f.rowid, f.ref, f.ref_client, f.fk_statut, f.datet,';
+if ($hasCoreBilled) {
+	$sql .= ' f.facture as billed,';
+}
 $sql .= ' s.rowid as socid, s.nom as company_name,';
 $sql .= ' fswo.billing_status, fswo.date_billing_ready';
 $sql .= ' FROM '.$db->prefix().'fichinter as f';
@@ -46,6 +52,9 @@ $sql .= ' LEFT JOIN '.$db->prefix().'fieldservice_workorder as fswo';
 $sql .= ' ON fswo.fk_fichinter = f.rowid AND fswo.entity = f.entity';
 $sql .= ' WHERE f.entity IN ('.getEntity('intervention').')';
 $sql .= ' AND f.fk_statut = '.Fichinter::STATUS_CLOSED;
+if ($hasCoreBilled) {
+	$sql .= ' AND f.facture = 0';
+}
 $sql .= ' AND (fswo.billing_status IS NULL';
 $sql .= ' OR fswo.billing_status IN ('.FieldServiceWorkOrderState::BILLING_OPEN.','.FieldServiceWorkOrderState::BILLING_PENDING.','.FieldServiceWorkOrderState::BILLING_PARTIAL.'))';
 $sql .= ' ORDER BY COALESCE(fswo.date_billing_ready, f.datet, f.tms) ASC, f.rowid ASC';
