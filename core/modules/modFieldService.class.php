@@ -46,7 +46,7 @@ class modFieldService extends DolibarrModules
 		$this->picto = 'tools';
 
 		$this->module_parts = array(
-			'triggers' => 0,
+			'triggers' => 1,
 			'login' => 0,
 			'substitutions' => 0,
 			'menus' => 0,
@@ -57,7 +57,9 @@ class modFieldService extends DolibarrModules
 			'theme' => 0,
 			'css' => array(),
 			'js' => array(),
-			'hooks' => array(),
+			'hooks' => array(
+				'data' => array('interventioncard'),
+			),
 			'moduleforexternal' => 0,
 			'websitetemplates' => 0,
 			'captcha' => 0,
@@ -69,7 +71,7 @@ class modFieldService extends DolibarrModules
 
 		// Stock requires Product. ProductBatch remains optional so the module also works
 		// with installations that do not use lot/serial tracking.
-		$this->depends = array('modFicheinter', 'modStock');
+		$this->depends = array('modFicheinter', 'modStock', 'modExpedition');
 		$this->requiredby = array();
 		$this->conflictwith = array();
 		$this->langfiles = array('fieldservice@fieldservice');
@@ -91,7 +93,7 @@ class modFieldService extends DolibarrModules
 		// remains Fichinter.
 		$this->tabs = array();
 		$this->tabs[] = array(
-			'data' => 'intervention:+fieldservice_materials:FieldServiceMaterials:fieldservice@fieldservice:$user->hasRight("fieldservice", "materials", "read"):/fieldservice/material.php?id=__ID__'
+			'data' => 'intervention:+fieldservice_materials:FieldServiceMaterials,FieldServiceMaterial,/fieldservice/class/fieldservicematerial.class.php,countForIntervention:fieldservice@fieldservice:$user->hasRight("fieldservice", "materials", "read"):/fieldservice/material.php?id=__ID__'
 		);
 
 		$this->dictionaries = array();
@@ -124,9 +126,39 @@ class modFieldService extends DolibarrModules
 		$this->rights[$r][4] = 'materials';
 		$this->rights[$r][5] = 'delete';
 
-		// No standalone top-level menu in the first milestone. Field Service is
-		// reached from the Intervention object tab.
+		// Field Service now has an operational queue in addition to the
+		// Intervention object tab.
 		$this->menu = array();
+		$r = 0;
+		$this->menu[$r++] = array(
+			'fk_menu' => '',
+			'type' => 'top',
+			'titre' => 'ModuleFieldServiceName',
+			'prefix' => img_picto('', $this->picto, 'class="pictofixedwidth valignmiddle"'),
+			'mainmenu' => 'fieldservice',
+			'leftmenu' => '',
+			'url' => '/fieldservice/billing.php',
+			'langs' => 'fieldservice@fieldservice',
+			'position' => 90,
+			'enabled' => "isModEnabled('fieldservice')",
+			'perms' => '$user->hasRight("fieldservice", "materials", "read")',
+			'target' => '',
+			'user' => 0,
+		);
+		$this->menu[$r++] = array(
+			'fk_menu' => 'fk_mainmenu=fieldservice',
+			'type' => 'left',
+			'titre' => 'FieldServiceBillingQueue',
+			'mainmenu' => 'fieldservice',
+			'leftmenu' => 'fieldservice_billing',
+			'url' => '/fieldservice/billing.php',
+			'langs' => 'fieldservice@fieldservice',
+			'position' => 91,
+			'enabled' => "isModEnabled('fieldservice')",
+			'perms' => '$user->hasRight("fieldservice", "materials", "read")',
+			'target' => '',
+			'user' => 0,
+		);
 	}
 
 	/**

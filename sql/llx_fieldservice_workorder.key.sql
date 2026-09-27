@@ -1,0 +1,3 @@
+ALTER TABLE llx_fieldservice_workorder ADD UNIQUE INDEX uk_fieldservice_workorder_fichinter (fk_fichinter);
+ALTER TABLE llx_fieldservice_workorder ADD INDEX idx_fieldservice_workorder_entity (entity);
+ALTER TABLE llx_fieldservice_workorder ADD INDEX idx_fieldservice_workorder_billing_status (billing_status);
