@@ -66,6 +66,24 @@ class InterfaceFieldServiceTriggers extends DolibarrTriggers
 
 		if ($action === 'SHIPPING_DELETE') {
 			$shipmentService = new FieldServiceShipmentService($this->db);
+			$mapped = $shipmentService->isMappedShipment((int) $object->id);
+			if ($mapped < 0) {
+				$this->error = $shipmentService->error;
+				$this->errors = $shipmentService->errors;
+				return -1;
+			}
+			if ($mapped === 0) {
+				return 0;
+			}
+
+			// A finalized Field Service Shipment is part of the audit trail and may
+			// already have produced stock movements. Deleting it would orphan that
+			// history in core Dolibarr, so only draft mapped Shipments may be deleted.
+			if ((int) $object->status !== Expedition::STATUS_DRAFT) {
+				$this->error = 'FieldServiceFinalizedShipmentDeleteBlocked';
+				return -1;
+			}
+
 			$result = $shipmentService->cleanupShipmentMappings((int) $object->id, $user);
 			if ($result < 0) {
 				$this->error = $shipmentService->error;
