@@ -119,6 +119,7 @@ if ($action === 'add') {
 	$productid = GETPOSTINT('fk_product');
 	$warehouseid = GETPOSTINT('fk_entrepot');
 	$qty = GETPOSTFLOAT('qty');
+	$orderSourceSelection = GETPOST('order_source', 'alphanohtml');
 	$description = GETPOST('description', 'restricthtml');
 	$dateuse = dol_mktime(12, 0, 0, GETPOSTINT('date_usemonth'), GETPOSTINT('date_useday'), GETPOSTINT('date_useyear'));
 
@@ -155,7 +156,14 @@ if ($action === 'add') {
 		$material->description = $description;
 		$material->fk_user_create = $user->id;
 
-		if ($product->hasbatch()) {
+		$result = $shipmentService->applyOrderSourceSelection($material, $object, $orderSourceSelection);
+		if ($result < 0) {
+			$translationArgs = is_array($shipmentService->errors) ? $shipmentService->errors : array();
+			setEventMessages($langs->trans($shipmentService->error, ...$translationArgs), null, 'errors');
+			$error++;
+		}
+
+		if (!$error && $product->hasbatch()) {
 			if (!isModEnabled('productbatch')) {
 				setEventMessages($langs->trans('FieldServiceBatchModuleRequired'), null, 'errors');
 			} else {
@@ -165,7 +173,7 @@ if ($action === 'add') {
 				$allocproduct = $product;
 				$action = 'prepareadd';
 			}
-		} else {
+		} elseif (!$error) {
 			$db->begin();
 			$result = $material->create($user);
 			if ($result > 0) {
@@ -193,6 +201,7 @@ if ($action === 'addallocated') {
 	$productid = GETPOSTINT('fk_product');
 	$warehouseid = GETPOSTINT('fk_entrepot');
 	$qty = GETPOSTFLOAT('qty');
+	$orderSourceSelection = GETPOST('order_source', 'alphanohtml');
 	$description = GETPOST('description', 'restricthtml');
 	$dateuse = GETPOSTINT('date_use_ts');
 
@@ -234,6 +243,15 @@ if ($action === 'addallocated') {
 		$allocmaterial->description = $description;
 		$allocmaterial->fk_user_create = $user->id;
 		$allocproduct = $product;
+
+		$result = $shipmentService->applyOrderSourceSelection($allocmaterial, $object, $orderSourceSelection);
+		if ($result < 0) {
+			$translationArgs = is_array($shipmentService->errors) ? $shipmentService->errors : array();
+			setEventMessages($langs->trans($shipmentService->error, ...$translationArgs), null, 'errors');
+			$allocmaterial = null;
+			$allocproduct = null;
+			$action = '';
+		}
 	}
 }
 
@@ -253,6 +271,7 @@ if ($action === 'update' && $materialid > 0) {
 		$productid = GETPOSTINT('fk_product');
 		$warehouseid = GETPOSTINT('fk_entrepot');
 		$qty = GETPOSTFLOAT('qty');
+		$orderSourceSelection = GETPOST('order_source', 'alphanohtml');
 		$description = GETPOST('description', 'restricthtml');
 		$dateuse = dol_mktime(12, 0, 0, GETPOSTINT('date_usemonth'), GETPOSTINT('date_useday'), GETPOSTINT('date_useyear'));
 
@@ -294,6 +313,14 @@ if ($action === 'update' && $materialid > 0) {
 			$material->description = $description;
 			$material->fk_user_modif = $user->id;
 
+			$result = $shipmentService->applyOrderSourceSelection($material, $object, $orderSourceSelection, $material->id);
+			if ($result < 0) {
+				$translationArgs = is_array($shipmentService->errors) ? $shipmentService->errors : array();
+				setEventMessages($langs->trans($shipmentService->error, ...$translationArgs), null, 'errors');
+				$error++;
+			}
+
+			if (!$error) {
 			$db->begin();
 			$result = $material->update($user);
 			if ($result > 0 && $resetAllocation) {
@@ -323,6 +350,7 @@ if ($action === 'update' && $materialid > 0) {
 			$errorMessage = $material->error ?: ($allocation->error ?: $shipmentService->error);
 			$errorList = array_merge($material->errors, $allocation->errors, $shipmentService->errors);
 			setEventMessages($errorMessage, $errorList, 'errors');
+			}
 		}
 
 		$action = 'edit';
@@ -580,6 +608,17 @@ dol_banner_tab($object, 'ref', $linkback, 1, 'ref', 'ref', $morehtmlref);
 
 print '<div class="fichecenter">';
 
+$linkedOrderIds = $shipmentService->getLinkedOrderIds($object);
+if ($linkedOrderIds === false) {
+	setEventMessages($shipmentService->error, $shipmentService->errors, 'errors');
+	$linkedOrderIds = array();
+}
+$orderLineAvailability = $shipmentService->getOrderLineAvailability($object);
+if ($orderLineAvailability === false) {
+	setEventMessages($shipmentService->error, $shipmentService->errors, 'errors');
+	$orderLineAvailability = array();
+}
+
 $shipmentRows = $shipmentService->getShipmentsForIntervention($object->id);
 if ($shipmentRows === false) {
 	setEventMessages($shipmentService->error, $shipmentService->errors, 'errors');
@@ -645,6 +684,7 @@ print '<div class="div-table-responsive-no-min">';
 print '<table class="noborder centpercent">';
 print '<tr class="liste_titre">';
 print '<td>'.$langs->trans('Product').'</td>';
+print '<td>'.$langs->trans('FieldServiceOrderSource').'</td>';
 print '<td>'.$langs->trans('Warehouse').'</td>';
 print '<td class="right">'.$langs->trans('Qty').'</td>';
 print '<td>'.$langs->trans('Date').'</td>';
@@ -655,7 +695,7 @@ print '<td class="right"></td>';
 print '</tr>';
 
 if (empty($lines)) {
-	print '<tr class="oddeven"><td colspan="8"><span class="opacitymedium">'.$langs->trans('None').'</span></td></tr>';
+	print '<tr class="oddeven"><td colspan="9"><span class="opacitymedium">'.$langs->trans('None').'</span></td></tr>';
 } else {
 	foreach ($lines as $line) {
 		$product = new Product($db);
@@ -665,6 +705,24 @@ if (empty($lines)) {
 
 		print '<tr class="oddeven">';
 		print '<td>'.$product->getNomUrl(1).' - '.dol_escape_htmltag($product->label).'</td>';
+		print '<td>';
+		if ($line->origin_type === 'commande' && !empty($line->fk_origin_line)) {
+			$source = $orderLineAvailability[(int) $line->fk_origin_line] ?? null;
+			if (is_array($source)) {
+				print dol_escape_htmltag($source['order_ref']).' / #'.((int) $source['line_id']);
+				print '<br><span class="opacitymedium">';
+				print $langs->trans('FieldServiceOrderedShippedRemaining',
+					(string) ((float) $source['ordered_qty'] + 0),
+					(string) ((float) $source['shipped_qty'] + 0),
+					(string) ((float) $source['remaining_qty'] + 0));
+				print '</span>';
+			} else {
+				print '<span class="warning">'.$langs->trans('FieldServiceOrderSourceMissing').'</span>';
+			}
+		} else {
+			print '<span class="opacitymedium">'.$langs->trans(!empty($linkedOrderIds) ? 'FieldServiceExtraMaterial' : 'FieldServiceNoOrderSource').'</span>';
+		}
+		print '</td>';
 		print '<td>'.$warehouse->getNomUrl(1).'</td>';
 		print '<td class="right">'.dol_escape_htmltag((string) ((float) $line->qty + 0)).'</td>';
 		print '<td>'.dol_print_date($line->date_use, 'day').'</td>';
@@ -782,6 +840,10 @@ if (is_object($allocmaterial) && is_object($allocproduct)) {
 		print '<input type="hidden" name="fk_product" value="'.((int) $allocmaterial->fk_product).'">';
 		print '<input type="hidden" name="fk_entrepot" value="'.((int) $allocmaterial->fk_entrepot).'">';
 		print '<input type="hidden" name="qty" value="'.dol_escape_htmltag((string) $allocmaterial->qty, 1).'">';
+		$orderSourceValue = ($allocmaterial->origin_type === 'commande' && !empty($allocmaterial->fk_origin_line))
+			? 'line:'.((int) $allocmaterial->fk_origin_line)
+			: 'extra';
+		print '<input type="hidden" name="order_source" value="'.dol_escape_htmltag($orderSourceValue, 1).'">';
 		print '<input type="hidden" name="date_use_ts" value="'.((int) $allocmaterial->date_use).'">';
 		print '<input type="hidden" name="description" value="'.dol_escape_htmltag((string) $allocmaterial->description, 1).'">';
 	}
@@ -875,6 +937,7 @@ if (!is_object($allocmaterial) && $user->hasRight('fieldservice', 'materials', '
 	$hasSubmittedValues = GETPOSTISSET('fk_product')
 		|| GETPOSTISSET('fk_entrepot')
 		|| GETPOSTISSET('qty')
+		|| GETPOSTISSET('order_source')
 		|| GETPOSTISSET('date_useyear')
 		|| GETPOSTISSET('description');
 
@@ -883,6 +946,7 @@ if (!is_object($allocmaterial) && $user->hasRight('fieldservice', 'materials', '
 		$selectedWarehouse = GETPOSTINT('fk_entrepot') > 0 ? GETPOSTINT('fk_entrepot') : -2;
 		$postedQty = GETPOST('qty', 'alphanohtml');
 		$selectedQty = ($scannedProductId > 0 && $postedQty === '') ? '1' : $postedQty;
+		$selectedOrderSource = GETPOST('order_source', 'alphanohtml');
 		$selectedDescription = GETPOST('description', 'restricthtml');
 
 		if (GETPOSTINT('date_useyear') > 0 && GETPOSTINT('date_usemonth') > 0 && GETPOSTINT('date_useday') > 0) {
@@ -894,8 +958,17 @@ if (!is_object($allocmaterial) && $user->hasRight('fieldservice', 'materials', '
 		$selectedProduct = $isEdit ? (int) $editmaterial->fk_product : 0;
 		$selectedWarehouse = $isEdit ? (int) $editmaterial->fk_entrepot : -2;
 		$selectedQty = $isEdit ? $editmaterial->qty : '';
+		$selectedOrderSource = ($isEdit && $editmaterial->origin_type === 'commande' && !empty($editmaterial->fk_origin_line))
+			? 'line:'.((int) $editmaterial->fk_origin_line)
+			: ($isEdit && !empty($linkedOrderIds) ? 'extra' : '');
 		$selectedDescription = $isEdit ? $editmaterial->description : '';
 		$selectedDate = $isEdit ? $editmaterial->date_use : dol_now();
+	}
+
+	$formOrderLineAvailability = $shipmentService->getOrderLineAvailability($object, 0, $isEdit ? (int) $editmaterial->id : 0);
+	if ($formOrderLineAvailability === false) {
+		setEventMessages($shipmentService->error, $shipmentService->errors, 'errors');
+		$formOrderLineAvailability = array();
 	}
 
 	print '<br>';
@@ -919,6 +992,32 @@ if (!is_object($allocmaterial) && $user->hasRight('fieldservice', 'materials', '
 	print img_picto('', 'product', 'class="pictofixedwidth"');
 	$form->select_produits($selectedProduct, 'fk_product', 0, 0, 0, -1, 2, '', 1, array(), 0, '1', 0, 'maxwidth500', 1, 'warehouseopen', null, 0);
 	print '</td></tr>';
+
+	if (!empty($linkedOrderIds)) {
+		print '<tr><td class="fieldrequired">'.$langs->trans('FieldServiceOrderSource').'</td><td>';
+		print '<select name="order_source" class="flat minwidth500" required>';
+		print '<option value="">'.$langs->trans('FieldServiceSelectOrderSource').'</option>';
+		print '<option value="extra"'.($selectedOrderSource === 'extra' ? ' selected' : '').'>'.$langs->trans('FieldServiceExtraMaterial').'</option>';
+		foreach ($formOrderLineAvailability as $source) {
+			$value = 'line:'.((int) $source['line_id']);
+			$label = $source['order_ref'].' / #'.((int) $source['line_id']).' — '.$source['product_ref'];
+			if ($source['product_label'] !== '') {
+				$label .= ' '.$source['product_label'];
+			}
+			$label .= ' — '.$langs->trans(
+				'FieldServiceOrderedShippedRemaining',
+				(string) ((float) $source['ordered_qty'] + 0),
+				(string) ((float) $source['shipped_qty'] + 0),
+				(string) ((float) $source['remaining_qty'] + 0)
+			);
+			$isSelected = ($selectedOrderSource === $value);
+			$isUnavailable = ((float) $source['remaining_qty'] <= 0.00000001 && !$isSelected);
+			print '<option value="'.dol_escape_htmltag($value, 1).'"'.($isSelected ? ' selected' : '').($isUnavailable ? ' disabled' : '').'>'.dol_escape_htmltag($label).'</option>';
+		}
+		print '</select>';
+		print '<div class="opacitymedium">'.$langs->trans('FieldServiceOrderSourceHelp').'</div>';
+		print '</td></tr>';
+	}
 
 	print '<tr><td class="fieldrequired">'.$langs->trans('Warehouse').'</td><td>';
 	print img_picto('', 'stock', 'class="pictofixedwidth"');
