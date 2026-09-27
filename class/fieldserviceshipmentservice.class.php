@@ -50,6 +50,206 @@ class FieldServiceShipmentService
 	}
 
 	/**
+	 * Return customer order ids explicitly linked to an Intervention.
+	 *
+	 * @param Fichinter $workOrder Intervention
+	 * @return int[]|false Order ids or false on error
+	 */
+	public function getLinkedOrderIds(Fichinter $workOrder)
+	{
+		$workOrder->clearObjectLinkedCache();
+		$result = $workOrder->fetchObjectLinked();
+		if ($result < 0) {
+			$this->error = $workOrder->error;
+			$this->errors = $workOrder->errors;
+			return false;
+		}
+
+		$orderIds = array();
+		if (!empty($workOrder->linkedObjectsIds['commande'])) {
+			foreach ($workOrder->linkedObjectsIds['commande'] as $orderId) {
+				$orderId = (int) $orderId;
+				if ($orderId > 0) {
+					$orderIds[$orderId] = $orderId;
+				}
+			}
+		}
+
+		return array_values($orderIds);
+	}
+
+	/**
+	 * Return order-line shipment availability for orders linked to a work order.
+	 *
+	 * Draft and finalized Shipment lines both count as already allocated/shipped,
+	 * matching Dolibarr's order-backed Shipment card. When editing one Field
+	 * Service material row, its current Shipment line can be excluded.
+	 *
+	 * @param Fichinter $workOrder Intervention
+	 * @param int $productId Optional product filter
+	 * @param int $excludeMaterialId Optional Field Service material id to exclude
+	 * @return array<int,array<string,mixed>>|false Indexed by commandedet rowid
+	 */
+	public function getOrderLineAvailability(Fichinter $workOrder, $productId = 0, $excludeMaterialId = 0)
+	{
+		$orderIds = $this->getLinkedOrderIds($workOrder);
+		if ($orderIds === false) {
+			return false;
+		}
+		if (empty($orderIds)) {
+			return array();
+		}
+
+		$idList = implode(',', array_map('intval', $orderIds));
+		$sql = 'SELECT c.rowid as order_id, c.ref as order_ref, c.fk_soc,';
+		$sql .= ' cd.rowid as line_id, cd.fk_product, cd.qty as ordered_qty, cd.fk_unit, cd.rang,';
+		$sql .= ' p.ref as product_ref, p.label as product_label,';
+		$sql .= ' COALESCE(SUM(CASE';
+		if ($excludeMaterialId > 0) {
+			$sql .= ' WHEN fms_self.rowid IS NOT NULL THEN 0';
+		}
+		$sql .= ' ELSE ed.qty END), 0) as shipped_qty';
+		$sql .= ' FROM '.$this->db->prefix().'commande as c';
+		$sql .= ' INNER JOIN '.$this->db->prefix().'commandedet as cd ON cd.fk_commande = c.rowid';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'product as p ON p.rowid = cd.fk_product';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expeditiondet as ed ON ed.fk_elementdet = cd.rowid AND ed.element_type = \'commande\'';
+		if ($excludeMaterialId > 0) {
+			$sql .= ' LEFT JOIN '.$this->db->prefix().'fieldservice_material_shipment as fms_self';
+			$sql .= ' ON fms_self.fk_expeditiondet = ed.rowid AND fms_self.fk_material = '.((int) $excludeMaterialId);
+		}
+		$sql .= ' WHERE c.rowid IN ('.$idList.')';
+		$sql .= ' AND cd.fk_product IS NOT NULL';
+		if ($productId > 0) {
+			$sql .= ' AND cd.fk_product = '.((int) $productId);
+		}
+		$sql .= ' GROUP BY c.rowid, c.ref, c.fk_soc, cd.rowid, cd.fk_product, cd.qty, cd.fk_unit, cd.rang, p.ref, p.label';
+		$sql .= ' ORDER BY c.ref ASC, cd.rang ASC, cd.rowid ASC';
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			return false;
+		}
+
+		$result = array();
+		while ($obj = $this->db->fetch_object($resql)) {
+			$ordered = (float) $obj->ordered_qty;
+			$shipped = (float) $obj->shipped_qty;
+			$result[(int) $obj->line_id] = array(
+				'order_id' => (int) $obj->order_id,
+				'order_ref' => (string) $obj->order_ref,
+				'fk_soc' => (int) $obj->fk_soc,
+				'line_id' => (int) $obj->line_id,
+				'fk_product' => (int) $obj->fk_product,
+				'product_ref' => (string) $obj->product_ref,
+				'product_label' => (string) $obj->product_label,
+				'fk_unit' => !empty($obj->fk_unit) ? (int) $obj->fk_unit : 0,
+				'ordered_qty' => $ordered,
+				'shipped_qty' => $shipped,
+				'remaining_qty' => $ordered - $shipped,
+			);
+		}
+		$this->db->free($resql);
+
+		return $result;
+	}
+
+	/**
+	 * Apply and validate an explicit order-source choice on a material row.
+	 *
+	 * Selection values are "extra" or "line:<commandedet id>". If linked orders
+	 * exist, an explicit choice is mandatory so Field Service never guesses.
+	 *
+	 * @param FieldServiceMaterial $material Material row
+	 * @param Fichinter $workOrder Intervention
+	 * @param string $selection Source selection
+	 * @param int $excludeMaterialId Material id being edited
+	 * @return int<-1,1>
+	 */
+	public function applyOrderSourceSelection(FieldServiceMaterial $material, Fichinter $workOrder, $selection, $excludeMaterialId = 0)
+	{
+		$orderIds = $this->getLinkedOrderIds($workOrder);
+		if ($orderIds === false) {
+			return -1;
+		}
+
+		$selection = trim((string) $selection);
+		if (empty($orderIds)) {
+			$material->origin_type = null;
+			$material->fk_origin_line = null;
+			return 1;
+		}
+
+		if ($selection === '') {
+			$this->error = 'FieldServiceOrderSourceRequired';
+			return -1;
+		}
+		if ($selection === 'extra') {
+			$material->origin_type = null;
+			$material->fk_origin_line = null;
+			return 1;
+		}
+		if (!preg_match('/^line:(\\d+)$/', $selection, $matches)) {
+			$this->error = 'FieldServiceInvalidOrderSource';
+			return -1;
+		}
+
+		$lineId = (int) $matches[1];
+		$availability = $this->getOrderLineAvailability($workOrder, (int) $material->fk_product, (int) $excludeMaterialId);
+		if ($availability === false) {
+			return -1;
+		}
+		if (empty($availability[$lineId])) {
+			$this->error = 'FieldServiceOrderLineProductMismatch';
+			return -1;
+		}
+
+		$source = $availability[$lineId];
+		if ((int) $source['fk_soc'] !== (int) $workOrder->socid) {
+			$this->error = 'OrderThirdPartyMismatch';
+			return -1;
+		}
+		if ((float) $material->qty - (float) $source['remaining_qty'] > 0.00000001) {
+			$this->error = 'FieldServiceOrderLineQtyExceeded';
+			$this->errors = array(
+				(string) $source['order_ref'],
+				(string) $source['product_ref'],
+				(string) ((float) $source['remaining_qty'] + 0),
+			);
+			return -1;
+		}
+
+		$material->origin_type = 'commande';
+		$material->fk_origin_line = $lineId;
+		if (empty($material->fk_unit) && !empty($source['fk_unit'])) {
+			$material->fk_unit = (int) $source['fk_unit'];
+		}
+
+		return 1;
+	}
+
+	/**
+	 * Validate an already stored material/order provenance before Shipment sync.
+	 *
+	 * @param FieldServiceMaterial $material Material row
+	 * @param Fichinter $workOrder Intervention
+	 * @return int<-1,1>
+	 */
+	public function validateMaterialOrderOrigin(FieldServiceMaterial $material, Fichinter $workOrder)
+	{
+		if ($material->origin_type !== 'commande' || empty($material->fk_origin_line)) {
+			return 1;
+		}
+
+		return $this->applyOrderSourceSelection(
+			$material,
+			$workOrder,
+			'line:'.((int) $material->fk_origin_line),
+			(int) $material->id
+		);
+	}
+
+	/**
 	 * Return exactly one customer order linked to the Intervention, otherwise 0.
 	 *
 	 * No guess is made when several orders are linked.
@@ -59,24 +259,14 @@ class FieldServiceShipmentService
 	 */
 	public function resolveSingleLinkedOrder(Fichinter $workOrder)
 	{
-		$workOrder->clearObjectLinkedCache();
-		$result = $workOrder->fetchObjectLinked();
-		if ($result < 0) {
-			$this->error = $workOrder->error;
-			$this->errors = $workOrder->errors;
+		$orderIds = $this->getLinkedOrderIds($workOrder);
+		if ($orderIds === false) {
 			return -1;
-		}
-
-		$orderIds = array();
-		if (!empty($workOrder->linkedObjectsIds['commande'])) {
-			foreach ($workOrder->linkedObjectsIds['commande'] as $orderId) {
-				$orderIds[(int) $orderId] = (int) $orderId;
-			}
 		}
 
 		if (count($orderIds) > 1) {
 			$this->error = 'FieldServiceMultipleOrdersRequireSelection';
-			$this->errors = array(implode(', ', array_map('strval', array_values($orderIds))));
+			$this->errors = array(implode(', ', array_map('strval', $orderIds)));
 			return -1;
 		}
 
@@ -107,7 +297,7 @@ class FieldServiceShipmentService
 			return (int) $orderLine->fk_commande;
 		}
 
-		return $this->resolveSingleLinkedOrder($workOrder);
+		return 0;
 	}
 
 	/**
@@ -343,6 +533,11 @@ class FieldServiceShipmentService
 		if ($product->fetch((int) $material->fk_product, '', '', '', 1, 1, 1) <= 0) {
 			$this->error = $product->error;
 			$this->errors = $product->errors;
+			return -1;
+		}
+
+		$result = $this->validateMaterialOrderOrigin($material, $workOrder);
+		if ($result < 0) {
 			return -1;
 		}
 
