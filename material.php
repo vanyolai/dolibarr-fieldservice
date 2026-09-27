@@ -21,7 +21,6 @@ require_once DOL_DOCUMENT_ROOT.'/product/stock/class/entrepot.class.php';
 require_once DOL_DOCUMENT_ROOT.'/product/class/html.formproduct.class.php';
 require_once __DIR__.'/class/fieldservicematerial.class.php';
 require_once __DIR__.'/class/fieldservicematerialallocation.class.php';
-require_once __DIR__.'/class/fieldserviceworkorderstate.class.php';
 require_once __DIR__.'/class/fieldserviceshipmentservice.class.php';
 
 /**
@@ -63,7 +62,6 @@ $form = new Form($db);
 $formproduct = new FormProduct($db);
 $material = new FieldServiceMaterial($db);
 $allocation = new FieldServiceMaterialAllocation($db);
-$workOrderState = new FieldServiceWorkOrderState($db);
 $shipmentService = new FieldServiceShipmentService($db);
 $allocmaterial = null;
 $allocproduct = null;
@@ -580,56 +578,7 @@ $morehtmlref .= '</div>';
 
 dol_banner_tab($object, 'ref', $linkback, 1, 'ref', 'ref', $morehtmlref);
 
-$billingStatus = FieldServiceWorkOrderState::BILLING_OPEN;
-$billingStateResult = $workOrderState->fetchByIntervention($object->id);
-if ($billingStateResult > 0) {
-	$billingStatus = (int) $workOrderState->billing_status;
-} elseif ($billingStateResult < 0) {
-	setEventMessages($workOrderState->error, $workOrderState->errors, 'errors');
-}
-
-// Existing completed work orders predate Field Service metadata. Until a row is
-// persisted by the close workflow, treat them as waiting for invoicing rather
-// than forcing the operational work order to remain open.
-if ((int) $object->status === Fichinter::STATUS_CLOSED) {
-	if ($billingStatus === FieldServiceWorkOrderState::BILLING_OPEN) {
-		$billingStatus = FieldServiceWorkOrderState::BILLING_PENDING;
-	}
-} elseif ($billingStatus === FieldServiceWorkOrderState::BILLING_PENDING) {
-	// A reopened work order is operationally active again. Do not present it as
-	// ready for billing until it is completed again.
-	$billingStatus = FieldServiceWorkOrderState::BILLING_OPEN;
-}
-
-switch ($billingStatus) {
-	case FieldServiceWorkOrderState::BILLING_PENDING:
-		$billingLabel = $langs->trans('FieldServiceBillingPending');
-		$billingStatusHtml = dolGetStatus($billingLabel, $billingLabel, '', 'status1', 2);
-		break;
-	case FieldServiceWorkOrderState::BILLING_PARTIAL:
-		$billingLabel = $langs->trans('FieldServiceBillingPartial');
-		$billingStatusHtml = dolGetStatus($billingLabel, $billingLabel, '', 'status3', 2);
-		break;
-	case FieldServiceWorkOrderState::BILLING_INVOICED:
-		$billingLabel = $langs->trans('FieldServiceBillingInvoiced');
-		$billingStatusHtml = dolGetStatus($billingLabel, $billingLabel, '', 'status6', 2);
-		break;
-	case FieldServiceWorkOrderState::BILLING_NOT_BILLABLE:
-		$billingLabel = $langs->trans('FieldServiceBillingNotBillable');
-		$billingStatusHtml = dolGetStatus($billingLabel, $billingLabel, '', 'status4', 2);
-		break;
-	case FieldServiceWorkOrderState::BILLING_OPEN:
-	default:
-		$billingLabel = $langs->trans('FieldServiceBillingOpen');
-		$billingStatusHtml = dolGetStatus($billingLabel, $billingLabel, '', 'status0', 2);
-		break;
-}
-
 print '<div class="fichecenter">';
-print '<div class="underbanner clearboth"></div>';
-print '<div class="fieldservice-billing-status marginbottomonly">';
-print '<strong>'.$langs->trans('FieldServiceBillingStatus').':</strong> '.$billingStatusHtml;
-print '</div>';
 
 $shipmentRows = $shipmentService->getShipmentsForIntervention($object->id);
 if ($shipmentRows === false) {
