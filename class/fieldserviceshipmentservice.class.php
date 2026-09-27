@@ -104,11 +104,11 @@ class FieldServiceShipmentService
 		$sql = 'SELECT c.rowid as order_id, c.ref as order_ref, c.fk_soc,';
 		$sql .= ' cd.rowid as line_id, cd.fk_product, cd.qty as ordered_qty, cd.fk_unit, cd.rang,';
 		$sql .= ' p.ref as product_ref, p.label as product_label,';
-		$sql .= ' COALESCE(SUM(CASE';
 		if ($excludeMaterialId > 0) {
-			$sql .= ' WHEN fms_self.rowid IS NOT NULL THEN 0';
+			$sql .= ' COALESCE(SUM(CASE WHEN fms_self.rowid IS NOT NULL THEN 0 ELSE ed.qty END), 0) as shipped_qty';
+		} else {
+			$sql .= ' COALESCE(SUM(ed.qty), 0) as shipped_qty';
 		}
-		$sql .= ' ELSE ed.qty END), 0) as shipped_qty';
 		$sql .= ' FROM '.$this->db->prefix().'commande as c';
 		$sql .= ' INNER JOIN '.$this->db->prefix().'commandedet as cd ON cd.fk_commande = c.rowid';
 		$sql .= ' LEFT JOIN '.$this->db->prefix().'product as p ON p.rowid = cd.fk_product';
