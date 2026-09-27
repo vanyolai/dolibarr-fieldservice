@@ -427,6 +427,94 @@ class FieldServiceShipmentService
 	}
 
 	/**
+	 * Check whether a Shipment belongs to the Field Service workflow.
+	 *
+	 * @param int $shipmentId Shipment id
+	 * @return int<-1,1> 1 mapped, 0 not mapped, negative on error
+	 */
+	public function isMappedShipment($shipmentId)
+	{
+		$sql = 'SELECT rowid';
+		$sql .= ' FROM '.$this->db->prefix().'fieldservice_workorder_shipment';
+		$sql .= ' WHERE fk_expedition = '.((int) $shipmentId);
+		$sql .= $this->db->plimit(1);
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+
+		$mapped = $this->db->num_rows($resql) > 0 ? 1 : 0;
+		$this->db->free($resql);
+		return $mapped;
+	}
+
+	/**
+	 * Return validity of Shipment mappings for each material of an Intervention.
+	 *
+	 * @param int $fichinterId Intervention id
+	 * @return array<int,bool>|false Material id => valid Shipment + Shipment line
+	 */
+	public function getMaterialShipmentHealth($fichinterId)
+	{
+		$result = array();
+
+		$sql = 'SELECT fm.rowid as material_id,';
+		$sql .= ' MAX(CASE WHEN e.rowid IS NOT NULL AND ed.rowid IS NOT NULL THEN 1 ELSE 0 END) as mapping_valid';
+		$sql .= ' FROM '.$this->db->prefix().'fieldservice_material as fm';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'fieldservice_material_shipment as fms ON fms.fk_material = fm.rowid';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expedition as e ON e.rowid = fms.fk_expedition';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expeditiondet as ed';
+		$sql .= ' ON ed.rowid = fms.fk_expeditiondet AND ed.fk_expedition = fms.fk_expedition';
+		$sql .= ' WHERE fm.fk_fichinter = '.((int) $fichinterId);
+		$sql .= ' GROUP BY fm.rowid';
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			return false;
+		}
+
+		while ($obj = $this->db->fetch_object($resql)) {
+			$result[(int) $obj->material_id] = !empty($obj->mapping_valid);
+		}
+		$this->db->free($resql);
+
+		return $result;
+	}
+
+	/**
+	 * Check whether a posted material has lost its Shipment or Shipment line.
+	 *
+	 * @param int $fichinterId Intervention id
+	 * @return int<-1,1> 1 if inconsistent posted material exists
+	 */
+	public function hasBrokenPostedMaterial($fichinterId)
+	{
+		$sql = 'SELECT fm.rowid';
+		$sql .= ' FROM '.$this->db->prefix().'fieldservice_material as fm';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'fieldservice_material_shipment as fms ON fms.fk_material = fm.rowid';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expedition as e ON e.rowid = fms.fk_expedition';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expeditiondet as ed';
+		$sql .= ' ON ed.rowid = fms.fk_expeditiondet AND ed.fk_expedition = fms.fk_expedition';
+		$sql .= ' WHERE fm.fk_fichinter = '.((int) $fichinterId);
+		$sql .= ' AND fm.status = '.FieldServiceMaterial::STATUS_POSTED;
+		$sql .= ' AND (e.rowid IS NULL OR ed.rowid IS NULL)';
+		$sql .= $this->db->plimit(1);
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			return -1;
+		}
+
+		$broken = $this->db->num_rows($resql) > 0 ? 1 : 0;
+		$this->db->free($resql);
+		return $broken;
+	}
+
+	/**
 	 * Remove Field Service mappings for a Shipment being deleted.
 	 *
 	 * The SHIPPING_DELETE trigger calls this inside the Shipment transaction,
@@ -743,8 +831,12 @@ class FieldServiceShipmentService
 	 */
 	public function syncAllMaterials(Fichinter $workOrder, User $user)
 	{
-		$result = $this->repairMissingShipmentMappings($workOrder->id, $user);
-		if ($result < 0) {
+		$brokenPosted = $this->hasBrokenPostedMaterial($workOrder->id);
+		if ($brokenPosted < 0) {
+			return -1;
+		}
+		if ($brokenPosted > 0) {
+			$this->error = 'FieldServicePostedShipmentMissing';
 			return -1;
 		}
 
