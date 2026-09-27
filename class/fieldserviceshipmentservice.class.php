@@ -118,6 +118,7 @@ class FieldServiceShipmentService
 			$sql .= ' ON fms_self.fk_expeditiondet = ed.rowid AND fms_self.fk_material = '.((int) $excludeMaterialId);
 		}
 		$sql .= ' WHERE c.rowid IN ('.$idList.')';
+		$sql .= ' AND c.fk_statut IN ('.Commande::STATUS_VALIDATED.', '.Commande::STATUS_SHIPMENTONPROCESS.')';
 		$sql .= ' AND cd.fk_product IS NOT NULL';
 		if ($productId > 0) {
 			$sql .= ' AND cd.fk_product = '.((int) $productId);
@@ -175,6 +176,10 @@ class FieldServiceShipmentService
 
 		$selection = trim((string) $selection);
 		if (empty($orderIds)) {
+			if ($material->origin_type === 'commande' && !empty($material->fk_origin_line)) {
+				$this->error = 'FieldServiceOrderSourceMissing';
+				return -1;
+			}
 			$material->origin_type = null;
 			$material->fk_origin_line = null;
 			return 1;
