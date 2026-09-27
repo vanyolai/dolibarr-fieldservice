@@ -64,6 +64,17 @@ class InterfaceFieldServiceTriggers extends DolibarrTriggers
 			return $this->onBillingClassification($object, $user, false);
 		}
 
+		if ($action === 'SHIPPING_DELETE') {
+			$shipmentService = new FieldServiceShipmentService($this->db);
+			$result = $shipmentService->cleanupShipmentMappings((int) $object->id, $user);
+			if ($result < 0) {
+				$this->error = $shipmentService->error;
+				$this->errors = $shipmentService->errors;
+				return -1;
+			}
+			return 1;
+		}
+
 		return 0;
 	}
 
