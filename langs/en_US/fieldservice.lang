@@ -57,3 +57,7 @@ FieldServiceOrderThirdPartyMismatch=The related order belongs to a different thi
 FieldServiceInconsistent=Inconsistent
 FieldServicePostedShipmentMissing=There is issued material whose related shipment or shipment line no longer exists. Automatic resynchronization is unsafe; reconcile the stock movement first.
 FieldServiceFinalizedShipmentDeleteBlocked=A validated or closed Field Service shipment cannot be deleted because it may carry stock movements and audit history. Only draft Field Service shipments can be deleted.
+FieldServiceStandaloneShipmentDisabled=Standalone shipments are required for Field Service work orders without an order. Enable SHIPMENT_STANDALONE before synchronizing materials.
+FieldServiceMultipleOrdersRequireSelection=Several customer orders are linked to this work order. Field Service will not guess which order a material belongs to; select an order before shipment synchronization.
+FieldServiceShipmentLineProtected=Shipment lines managed by Field Service cannot be added, modified, deleted or reallocated directly on the shipment. Change material usage on the work order instead.
+FieldServiceShipmentIntegrityFailed=Field Service material data no longer matches the related shipment. Work order completion was blocked before any further shipment stock movement.
