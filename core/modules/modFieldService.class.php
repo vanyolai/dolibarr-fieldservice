@@ -58,7 +58,7 @@ class modFieldService extends DolibarrModules
 			'css' => array(),
 			'js' => array(),
 			'hooks' => array(
-				'data' => array('interventioncard', 'interventionlist'),
+				'data' => array('interventioncard'),
 			),
 			'moduleforexternal' => 0,
 			'websitetemplates' => 0,
@@ -93,7 +93,7 @@ class modFieldService extends DolibarrModules
 		// remains Fichinter.
 		$this->tabs = array();
 		$this->tabs[] = array(
-			'data' => 'intervention:+fieldservice_materials:FieldServiceMaterials:fieldservice@fieldservice:$user->hasRight("fieldservice", "materials", "read"):/fieldservice/material.php?id=__ID__'
+			'data' => 'intervention:+fieldservice_materials:FieldServiceMaterials,FieldServiceMaterial,/fieldservice/class/fieldservicematerial.class.php,countForIntervention:fieldservice@fieldservice:$user->hasRight("fieldservice", "materials", "read"):/fieldservice/material.php?id=__ID__'
 		);
 
 		$this->dictionaries = array();
