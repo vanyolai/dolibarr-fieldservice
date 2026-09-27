@@ -93,24 +93,14 @@ class ActionsFieldService extends CommonHookActions
 	 */
 	public function printFieldListTitle($parameters, &$object, &$action, $hookmanager)
 	{
-		global $langs;
-
+		// Core now exposes operational status and billed state as separate columns.
+		// Do not add a redundant Field Service billing column to the generic list.
 		$this->resprints = '';
-		if (($parameters['currentcontext'] ?? '') !== 'interventionlist') {
-			return 0;
-		}
-
-		$langs->load('fieldservice@fieldservice');
-		$this->resprints = '<td class="liste_titre">'.$langs->trans('FieldServiceBillingStatus').'</td>';
-		if (isset($parameters['totalarray']) && is_array($parameters['totalarray'])) {
-			$parameters['totalarray']['nbfield']++;
-		}
-
 		return 0;
 	}
 
 	/**
-	 * Add billing-state value to each Intervention list row.
+	 * Do not add a redundant billing-state value to the Intervention list.
 	 *
 	 * @param array<string,mixed> $parameters Hook parameters
 	 * @param CommonObject $object List object
@@ -120,36 +110,7 @@ class ActionsFieldService extends CommonHookActions
 	 */
 	public function printFieldListValue($parameters, &$object, &$action, $hookmanager)
 	{
-		global $langs;
-
 		$this->resprints = '';
-		if (($parameters['currentcontext'] ?? '') !== 'interventionlist' || empty($parameters['obj']->rowid)) {
-			return 0;
-		}
-
-		$langs->load('fieldservice@fieldservice');
-
-		$state = new FieldServiceWorkOrderState($this->db);
-		$result = $state->fetchByIntervention((int) $parameters['obj']->rowid);
-		$storedStatus = $result > 0 ? (int) $state->billing_status : null;
-		$coreStatus = isset($parameters['obj']->fk_statut)
-			? (int) $parameters['obj']->fk_statut
-			: (isset($parameters['obj']->status) ? (int) $parameters['obj']->status : 0);
-		$coreBilledAvailable = property_exists($parameters['obj'], 'billed');
-		$billingStatus = $this->resolveBillingStatus(
-			$coreStatus,
-			$coreBilledAvailable,
-			$coreBilledAvailable ? (int) $parameters['obj']->billed : 0,
-			$storedStatus
-		);
-
-		$label = $langs->trans($this->getBillingStatusLabelKey($billingStatus));
-		$this->resprints = '<td>'.dolGetStatus($label, $label, '', $this->getBillingStatusCode($billingStatus), 2).'</td>';
-
-		if (isset($parameters['totalarray']) && is_array($parameters['totalarray']) && empty($parameters['i'])) {
-			$parameters['totalarray']['nbfield']++;
-		}
-
 		return 0;
 	}
 
