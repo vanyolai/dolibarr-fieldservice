@@ -64,6 +64,39 @@ class InterfaceFieldServiceTriggers extends DolibarrTriggers
 			return $this->onBillingClassification($object, $user, false);
 		}
 
+		if (in_array($action, array('LINESHIPPING_INSERT', 'LINESHIPPING_MODIFY', 'LINESHIPPING_DELETE'), true)) {
+			$shipmentService = new FieldServiceShipmentService($this->db);
+			$shipmentId = !empty($object->fk_expedition) ? (int) $object->fk_expedition : 0;
+			if ($shipmentId > 0) {
+				$mapped = $shipmentService->isMappedShipment($shipmentId);
+			} else {
+				$mapped = $shipmentService->isLineOnMappedShipment((int) $object->id);
+			}
+			if ($mapped < 0) {
+				$this->error = $shipmentService->error;
+				$this->errors = $shipmentService->errors;
+				return -1;
+			}
+			if ($mapped > 0) {
+				$this->error = 'FieldServiceShipmentLineProtected';
+				return -1;
+			}
+		}
+
+		if ($action === 'EXPEDITIONLINEBATCH_CREATE') {
+			$shipmentService = new FieldServiceShipmentService($this->db);
+			$mapped = $shipmentService->isLineOnMappedShipment((int) $object->fk_expeditiondet);
+			if ($mapped < 0) {
+				$this->error = $shipmentService->error;
+				$this->errors = $shipmentService->errors;
+				return -1;
+			}
+			if ($mapped > 0) {
+				$this->error = 'FieldServiceShipmentLineProtected';
+				return -1;
+			}
+		}
+
 		if ($action === 'SHIPPING_DELETE') {
 			$shipmentService = new FieldServiceShipmentService($this->db);
 			$mapped = $shipmentService->isMappedShipment((int) $object->id);
