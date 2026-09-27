@@ -112,7 +112,7 @@ class FieldServiceShipmentService
 		$sql .= ' FROM '.$this->db->prefix().'commande as c';
 		$sql .= ' INNER JOIN '.$this->db->prefix().'commandedet as cd ON cd.fk_commande = c.rowid';
 		$sql .= ' LEFT JOIN '.$this->db->prefix().'product as p ON p.rowid = cd.fk_product';
-		$sql .= ' LEFT JOIN '.$this->db->prefix().'expeditiondet as ed ON ed.fk_elementdet = cd.rowid AND ed.element_type = \'commande\'';
+		$sql .= ' LEFT JOIN '.$this->db->prefix().'expeditiondet as ed ON ed.fk_elementdet = cd.rowid';
 		if ($excludeMaterialId > 0) {
 			$sql .= ' LEFT JOIN '.$this->db->prefix().'fieldservice_material_shipment as fms_self';
 			$sql .= ' ON fms_self.fk_expeditiondet = ed.rowid AND fms_self.fk_material = '.((int) $excludeMaterialId);
@@ -206,7 +206,7 @@ class FieldServiceShipmentService
 
 		$source = $availability[$lineId];
 		if ((int) $source['fk_soc'] !== (int) $workOrder->socid) {
-			$this->error = 'OrderThirdPartyMismatch';
+			$this->error = 'FieldServiceOrderThirdPartyMismatch';
 			return -1;
 		}
 		if ((float) $material->qty - (float) $source['remaining_qty'] > 0.00000001) {
@@ -276,9 +276,9 @@ class FieldServiceShipmentService
 	/**
 	 * Resolve the order used as Shipment origin for a material row.
 	 *
-	 * Explicit commandedet origin wins. Otherwise a single order linked to the
-	 * work order is used as Shipment header origin, but the material line stays
-	 * a free Shipment line until it is explicitly/uniquely mapped to commandedet.
+	 * Only explicit commandedet provenance creates an order-backed Shipment.
+	 * Material marked as extra has no order provenance and is synchronized to a
+	 * standalone Shipment, even when customer orders are linked to the work order.
 	 *
 	 * @param FieldServiceMaterial $material Material row
 	 * @param Fichinter $workOrder Intervention
@@ -562,7 +562,7 @@ class FieldServiceShipmentService
 		$line->element_type = 'fichinter';
 
 		if ($material->origin_type === 'commande' && !empty($material->fk_origin_line)) {
-			$line->element_type = 'commande';
+			$line->element_type = 'order';
 			$line->fk_elementdet = (int) $material->fk_origin_line;
 			$line->origin_line_id = (int) $material->fk_origin_line;
 		}
@@ -978,7 +978,7 @@ class FieldServiceShipmentService
 
 			$hasOrderOrigin = ((string) $obj->material_origin_type === 'commande' && !empty($obj->material_origin_line));
 			if ($hasOrderOrigin) {
-				if ((string) $obj->line_element_type !== 'commande' || (int) $obj->line_origin_line !== (int) $obj->material_origin_line) {
+				if (!in_array((string) $obj->line_element_type, array('order', 'commande'), true) || (int) $obj->line_origin_line !== (int) $obj->material_origin_line) {
 					$this->db->free($resql);
 					return $this->failShipmentIntegrity($materialId, 'order-line provenance mismatch');
 				}
