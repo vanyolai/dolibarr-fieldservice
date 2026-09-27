@@ -611,8 +611,24 @@ if (!is_array($lines)) {
 	$lines = array();
 }
 
+$materialShipmentHealth = $shipmentService->getMaterialShipmentHealth($object->id);
+if ($materialShipmentHealth === false) {
+	setEventMessages($shipmentService->error, $shipmentService->errors, 'errors');
+	$materialShipmentHealth = array();
+}
+
+$brokenPostedMaterial = $shipmentService->hasBrokenPostedMaterial($object->id);
+if ($brokenPostedMaterial < 0) {
+	setEventMessages($shipmentService->error, $shipmentService->errors, 'errors');
+	$brokenPostedMaterial = 0;
+}
+
 $shipmentSyncComplete = $shipmentService->isMaterialSyncComplete($object->id);
-if ($shipmentSyncComplete === 0 && !empty($lines)) {
+if ($brokenPostedMaterial > 0) {
+	print '<div class="error">';
+	print $langs->trans('FieldServicePostedShipmentMissing');
+	print '</div>';
+} elseif ($shipmentSyncComplete === 0 && !empty($lines)) {
 	print '<div class="warning">';
 	print $langs->trans('FieldServiceShipmentSyncRequired');
 	if ($user->hasRight('fieldservice', 'materials', 'write')) {
@@ -674,7 +690,11 @@ if (empty($lines)) {
 		}
 		print '</td>';
 		print '<td>';
-		if ((int) $line->status === FieldServiceMaterial::STATUS_DRAFT) {
+		$mappingHealthy = !empty($materialShipmentHealth[(int) $line->id]);
+		if ((int) $line->status === FieldServiceMaterial::STATUS_POSTED && !$mappingHealthy) {
+			$label = $langs->trans('FieldServiceInconsistent');
+			print dolGetStatus($label, $label, '', 'status8', 2);
+		} elseif ((int) $line->status === FieldServiceMaterial::STATUS_DRAFT) {
 			print $langs->trans('Draft');
 		} elseif ((int) $line->status === FieldServiceMaterial::STATUS_POSTED) {
 			print $langs->trans('FieldServicePosted');
