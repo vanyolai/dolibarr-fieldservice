@@ -1,0 +1,3 @@
+ALTER TABLE llx_fieldservice_workorder_shipment ADD UNIQUE INDEX uk_fieldservice_workorder_shipment_expedition (fk_expedition);
+ALTER TABLE llx_fieldservice_workorder_shipment ADD INDEX idx_fieldservice_workorder_shipment_fichinter (fk_fichinter);
+ALTER TABLE llx_fieldservice_workorder_shipment ADD INDEX idx_fieldservice_workorder_shipment_commande (fk_commande);

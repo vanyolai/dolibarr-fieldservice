@@ -1,0 +1,8 @@
+CREATE TABLE llx_fieldservice_material_shipment(
+	rowid INTEGER AUTO_INCREMENT PRIMARY KEY,
+	fk_material INTEGER NOT NULL,
+	fk_expedition INTEGER NOT NULL,
+	fk_expeditiondet INTEGER NOT NULL,
+	date_creation DATETIME NOT NULL,
+	tms TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=innodb;

@@ -154,6 +154,35 @@ class FieldServiceMaterial extends CommonObject
 	}
 
 	/**
+	 * Count material lines belonging to one Intervention.
+	 *
+	 * Used by Dolibarr's external-tab badge mechanism.
+	 *
+	 * @param int $fichinterId Core Fichinter id
+	 * @param mixed $unused Compatibility argument supplied by tab loader
+	 * @return int
+	 */
+	public function countForIntervention($fichinterId, $unused = null)
+	{
+		global $conf;
+
+		$sql = 'SELECT COUNT(rowid) as nb';
+		$sql .= ' FROM '.$this->db->prefix().$this->table_element;
+		$sql .= ' WHERE entity = '.((int) $conf->entity);
+		$sql .= ' AND fk_fichinter = '.((int) $fichinterId);
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			return 0;
+		}
+
+		$obj = $this->db->fetch_object($resql);
+		$this->db->free($resql);
+
+		return $obj ? (int) $obj->nb : 0;
+	}
+
+	/**
 	 * Load material lines belonging to one Intervention.
 	 *
 	 * @param int $fichinterId Core Fichinter id

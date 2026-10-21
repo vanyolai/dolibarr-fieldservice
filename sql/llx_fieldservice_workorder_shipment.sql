@@ -1,0 +1,8 @@
+CREATE TABLE llx_fieldservice_workorder_shipment(
+	rowid INTEGER AUTO_INCREMENT PRIMARY KEY,
+	fk_fichinter INTEGER NOT NULL,
+	fk_expedition INTEGER NOT NULL,
+	fk_commande INTEGER,
+	date_creation DATETIME NOT NULL,
+	tms TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=innodb;
