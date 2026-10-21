@@ -44,4 +44,15 @@ git subtree pull --prefix=htdocs/custom/fieldservice fieldservice main --squash
 
 ## Status
 
-Early development. The first milestone defines the module skeleton and material-usage data model. Stock posting and LOT/SN allocation logic will be added in subsequent commits.
+FieldService remains **pre-stable**. Standalone `main` contains the module
+foundation, material CRUD, barcode-assisted entry and LOT/SN allocation.
+
+Draft [PR #4](https://github.com/vanyolai/dolibarr-fieldservice/pull/4),
+`feature/shipment-integration`, adds Shipment synchronization, explicit
+customer-order-line provenance, shipment lifecycle protection and the
+billing queue. Its end-to-end Dolibarr 23 integration tests are **pending**.
+
+The Dolibarr `production` subtree currently contains a divergent, earlier
+shipment integration snapshot. Do **not** blindly pull either tree.
+Review [DEVELOPMENT.md](DEVELOPMENT.md) and
+[docs/source-reconciliation.md](docs/source-reconciliation.md) first.

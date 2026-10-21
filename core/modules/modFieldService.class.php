@@ -58,7 +58,7 @@ class modFieldService extends DolibarrModules
 			'css' => array(),
 			'js' => array(),
 			'hooks' => array(
-				'data' => array('interventioncard'),
+				'data' => array('interventioncard', 'interventionlist'),
 			),
 			'moduleforexternal' => 0,
 			'websitetemplates' => 0,

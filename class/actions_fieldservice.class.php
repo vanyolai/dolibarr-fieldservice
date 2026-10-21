@@ -27,6 +27,9 @@ class ActionsFieldService extends CommonHookActions
 	/** @var string */
 	public $resprints = '';
 
+	/** @var bool|null Cached core billed-field capability */
+	private $coreHasBilledField = null;
+
 	/**
 	 * Constructor.
 	 *
@@ -83,6 +86,25 @@ class ActionsFieldService extends CommonHookActions
 	}
 
 	/**
+	 * Detect an independent core Intervention billed field.
+	 * Legacy Dolibarr stores billed classification in fk_statut instead.
+	 *
+	 * @return bool
+	 */
+	private function hasCoreBilledField()
+	{
+		if ($this->coreHasBilledField !== null) {
+			return $this->coreHasBilledField;
+		}
+
+		require_once DOL_DOCUMENT_ROOT.'/fichinter/class/fichinter.class.php';
+		$probe = new Fichinter($this->db);
+		$this->coreHasBilledField = isset($probe->fields['facture']) && property_exists($probe, 'billed');
+
+		return $this->coreHasBilledField;
+	}
+
+	/**
 	 * Add billing-state column title to Intervention list.
 	 *
 	 * @param array<string,mixed> $parameters Hook parameters
@@ -93,14 +115,24 @@ class ActionsFieldService extends CommonHookActions
 	 */
 	public function printFieldListTitle($parameters, &$object, &$action, $hookmanager)
 	{
-		// Core now exposes operational status and billed state as separate columns.
-		// Do not add a redundant Field Service billing column to the generic list.
+		global $langs;
+
 		$this->resprints = '';
+		if (($parameters['currentcontext'] ?? '') !== 'interventionlist' || $this->hasCoreBilledField()) {
+			return 0;
+		}
+
+		$langs->load('fieldservice@fieldservice');
+		$this->resprints = '<td class="liste_titre">'.$langs->trans('FieldServiceBillingStatus').'</td>';
+		if (isset($parameters['totalarray']) && is_array($parameters['totalarray'])) {
+			$parameters['totalarray']['nbfield']++;
+		}
+
 		return 0;
 	}
 
 	/**
-	 * Do not add a redundant billing-state value to the Intervention list.
+	 * Add billing-state value to each Intervention list row.
 	 *
 	 * @param array<string,mixed> $parameters Hook parameters
 	 * @param CommonObject $object List object
@@ -110,7 +142,33 @@ class ActionsFieldService extends CommonHookActions
 	 */
 	public function printFieldListValue($parameters, &$object, &$action, $hookmanager)
 	{
+		global $langs;
+
 		$this->resprints = '';
+		if (($parameters['currentcontext'] ?? '') !== 'interventionlist' || empty($parameters['obj']->rowid) || $this->hasCoreBilledField()) {
+			return 0;
+		}
+
+		$langs->load('fieldservice@fieldservice');
+
+		$state = new FieldServiceWorkOrderState($this->db);
+		$result = $state->fetchByIntervention((int) $parameters['obj']->rowid);
+		if ($result > 0) {
+			$billingStatus = (int) $state->billing_status;
+		} else {
+			$coreStatus = isset($parameters['obj']->fk_statut)
+				? (int) $parameters['obj']->fk_statut
+				: (isset($parameters['obj']->status) ? (int) $parameters['obj']->status : 0);
+			$billingStatus = $this->resolveBillingStatus($coreStatus, false, 0, null);
+		}
+
+		$label = $langs->trans($this->getBillingStatusLabelKey($billingStatus));
+		$this->resprints = '<td>'.dolGetStatus($label, $label, '', $this->getBillingStatusCode($billingStatus), 2).'</td>';
+
+		if (isset($parameters['totalarray']) && is_array($parameters['totalarray']) && empty($parameters['i'])) {
+			$parameters['totalarray']['nbfield']++;
+		}
+
 		return 0;
 	}
 
@@ -129,7 +187,7 @@ class ActionsFieldService extends CommonHookActions
 	 */
 	private function resolveBillingStatus($coreStatus, $coreBilledAvailable, $coreBilled, $storedStatus)
 	{
-		if ($coreBilledAvailable && $coreBilled) {
+		if (($coreBilledAvailable && $coreBilled) || (int) $coreStatus === Fichinter::STATUS_BILLED) {
 			return FieldServiceWorkOrderState::BILLING_INVOICED;
 		}
 
